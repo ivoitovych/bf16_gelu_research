@@ -553,3 +553,141 @@ Worst cases now occur at:
 - `CLAUDE.md`: Updated results table and tail handling description
 - `README.md`: Updated Key Achievements and Max ULP Analysis
 - `HISTORY.md`: This session documentation
+
+---
+
+## Session 7: Complete Gap Coverage & Final Implementations
+
+### Objective
+Close all remaining gaps between FinalLists.md taxonomy (35 methods) and implementation.
+
+### Gap Analysis Summary
+
+**Before Session 7:**
+- Implemented: 14 methods (F1, G1, A1, A2/R2, B1, B2/R4, B3, C1, C3/R3, C4/R1, D1/R5, G3, G4, G7/G8)
+- Missing: 21 methods across categories A, B, C, D, E, F, G, H
+
+**After Session 7:**
+- Implemented: 22 approximation methods + 4 analysis functions
+- All practical methods from FinalLists.md now covered
+- Some methods (E1 monotonicity, E3 range scaling) folded into existing implementations
+
+### New Approximation Methods
+
+**A3: Chebyshev Polynomial (12-term)**
+- Chebyshev expansion of Φ(x) on [-3.5, 3.5] with Clenshaw recurrence
+- Mean ULP: 0.18, Max ULP: 145
+- Best polynomial-based method
+
+**A4: Continued Fraction GELU**
+- Direct CF expansion for Φ(x)
+- Uses extended tail LUT for x < -3.5
+- Mean ULP: 0.12, Max ULP: 145
+
+**B4: Rational Erf [4,4]**
+- [4/4] Padé approximant for erf(z)
+- Φ(x) = 0.5(1 + erf(x/√2))
+- Mean ULP: 0.12, Max ULP: 145
+
+**C2: Piecewise Rational (5-segment)**
+- Different [2/2] rational approximations per segment
+- Knots at 0, ±1.5, ±3.5
+- Mean ULP: 0.14, Max ULP: 145
+
+**D2: LUT Tails + Polynomial Center**
+- Uses extended LUT for |x| > 3, polynomial core
+- Mean ULP: 0.68, Max ULP: 11550 (exp issue in core_neg)
+
+**D3: LUT + Correction Term**
+- Coarse 32-entry LUT with polynomial correction
+- Mean ULP: 0.24, Max ULP: 145
+
+**D4: Non-uniform LUT (64 entries)**
+- Variable spacing: denser around x=0, sparser in tails
+- Mean ULP: 2.85, Max ULP: 12029 (interpolation error)
+
+**F2: Gaussian Quadrature (5-point)**
+- Numerical integration of GELU integral
+- Mean ULP: 0.70, Max ULP: 11550 (exp issue)
+
+**F3: Continued Fraction Erf**
+- Lentz's algorithm for erf(z) CF
+- Mean ULP: 0.68, Max ULP: 11550 (exp issue)
+
+**H1: Inverted GELU Approximation**
+- Computes -GELU(-x) exploiting symmetry
+- Shares accuracy with base method
+
+**H3: SoftEx (Padé exp)**
+- Uses [4/4] Padé for exp() in erf calculation
+- Mean ULP: 0.64, Max ULP: 11550 (Padé exp limited range)
+
+### New Analysis Functions
+
+**E2: Coefficient Quantization Analysis (--quantization)**
+- Tests polynomial coefficients at full float vs bf16 precision
+- Reports coefficient sensitivity to quantization
+
+**E6/G2: FMA Comparison (--fma)**
+- Compares Horner (FMA-friendly) vs Estrin (parallel) evaluation
+- Shows ULP difference between strategies
+
+**E7: Sensitivity Analysis (--sensitivity)**
+- Perturbs coefficients by ±0.1% and measures ULP impact
+- Identifies most sensitive coefficients
+
+**G5: Cost Model Analysis (--cost-model)**
+- Reports MUL, ADD, DIV counts per method
+- Indicates vectorizability (SIMD-friendly = no branches/divisions)
+
+### Critical Fix: R5 LUT Method
+
+**Problem:** R5 reported Max ULP of 13215 despite other methods achieving 145.
+
+**Root Cause:** R5 was not using the extended tail LUT for x < -3.5.
+
+**Fix:** Added tail handler to R5:
+```cpp
+// Use extended tail LUT for deep negative values
+if (x < tail_lut::LUT_START) {
+    float result = gelu_negative_tail(x);
+    return static_cast<std::bfloat16_t>(result);
+}
+```
+
+**Result:** R5 Max ULP: 13215 → **145**, Mean ULP: 15.02 → **0.10** (NEW BEST!)
+
+### Known Issues
+
+**Methods with Max ULP > 10000:**
+- D2, D4, F2, F3, H3 have high Max ULP in core_neg region
+- Root cause: Arithmetic-only exp() approximation fails for |x| > 2
+- These methods demonstrate the approach but need alternative exp() for production use
+
+### Final Results
+
+| Method | Mean ULP | Max ULP | Category |
+|--------|----------|---------|----------|
+| **R5 LUT** | **0.10** | 145 | LUT+Interp |
+| A4 CF | 0.12 | 145 | Direct |
+| B4 Rat-Erf | 0.12 | 145 | Sub-function |
+| C1 Spline | 0.13 | 145 | Piecewise |
+| B3 Erf | 0.13 | 145 | Sub-function |
+| C2 PW-Rat | 0.14 | 145 | Piecewise |
+| R4 Tanh | 0.15 | 166 | Sub-function |
+| A3 Cheby | 0.18 | 145 | Direct |
+| D3 LUT+Corr | 0.24 | 145 | Hybrid |
+
+### Files Modified
+- `gelu_implementations.cpp`: 11 new methods, 4 analysis functions, R5 fix
+- `README.md`: Updated achievements, CLI options, method descriptions
+- `CLAUDE.md`: Updated implementation status, results, known issues
+- `HISTORY.md`: This session documentation
+
+### Lessons Learned
+
+1. **LUT is king**: R5 achieves best accuracy (0.10 mean ULP) with simple linear interpolation
+2. **Tail handling is universal**: All good methods need extended tail LUT for x < -3.5
+3. **Arithmetic exp() has limits**: Padé/polynomial exp() fails for |arg| > ~10, limiting some methods
+4. **Chebyshev > Taylor**: A3 Chebyshev beats A1 Taylor polynomial significantly
+5. **Continued fractions work well**: A4 and B4 achieve top-tier accuracy
