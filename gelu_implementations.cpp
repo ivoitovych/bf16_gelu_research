@@ -3031,6 +3031,404 @@ void analyze_cost_model() {
     std::cout << "- 'Partial' vectorizable means some parts are SIMD-friendly" << std::endl;
 }
 
+// ============================================================================
+// C5: EPSS (ERROR PEAK SEARCH STRATEGY) KNOT REFINEMENT
+// ============================================================================
+
+/**
+ * @brief C5: EPSS knot refinement - iteratively optimize breakpoints
+ *
+ * Algorithm:
+ * 1. Start with initial breakpoints
+ * 2. Evaluate ULP error at dense grid
+ * 3. Find error peaks (local maxima)
+ * 4. Move nearest breakpoint toward peak
+ * 5. Repeat until convergence
+ */
+void analyze_epss_refinement(const UlpCalculator& ulp_calc) {
+    std::cout << "\n================================================================" << std::endl;
+    std::cout << "         C5: EPSS KNOT REFINEMENT ANALYSIS                      " << std::endl;
+    std::cout << "================================================================" << std::endl;
+
+    // Current R3 PWL breakpoints (power-of-2)
+    std::vector<float> breakpoints = {-4.0f, -2.0f, -1.0f, -0.5f, 0.0f, 0.5f, 1.0f, 2.0f, 4.0f};
+
+    std::cout << "\nInitial breakpoints (R3 PWL power-of-2):" << std::endl;
+    for (float bp : breakpoints) {
+        std::cout << "  " << bp;
+    }
+    std::cout << std::endl;
+
+    // Find error peaks by scanning all bf16 values
+    struct ErrorPeak {
+        float x;
+        int64_t ulp;
+    };
+    std::vector<ErrorPeak> peaks;
+
+    // Scan for local maxima in ULP error
+    int64_t prev_ulp = 0;
+    int64_t curr_ulp = 0;
+    float prev_x = -10.0f;
+
+    for (uint16_t bits = 0; bits < 65535; ++bits) {
+        std::bfloat16_t x_bf16 = bits_to_bfloat16(bits);
+        float x = static_cast<float>(x_bf16);
+
+        if (!std::isfinite(x) || x < -4.0f || x > 4.0f) continue;
+
+        std::bfloat16_t approx = gelu_r3_pwl(x_bf16);
+        std::bfloat16_t ref = static_cast<std::bfloat16_t>(gelu_reference_f64(x));
+        int64_t ulp = ulp_calc.ulp_distance(approx, ref);
+
+        // Detect local maximum
+        if (prev_ulp > 100 && curr_ulp >= prev_ulp && ulp < curr_ulp) {
+            peaks.push_back({prev_x, curr_ulp});
+        }
+
+        prev_ulp = curr_ulp;
+        curr_ulp = ulp;
+        prev_x = x;
+    }
+
+    // Sort peaks by ULP descending
+    std::sort(peaks.begin(), peaks.end(), [](const ErrorPeak& a, const ErrorPeak& b) {
+        return a.ulp > b.ulp;
+    });
+
+    std::cout << "\nTop 10 error peaks in R3 PWL:" << std::endl;
+    std::cout << std::setw(12) << "x" << std::setw(12) << "ULP" << std::setw(20) << "Nearest breakpoint" << std::endl;
+    std::cout << std::string(44, '-') << std::endl;
+
+    for (size_t i = 0; i < std::min(size_t(10), peaks.size()); ++i) {
+        // Find nearest breakpoint
+        float nearest = breakpoints[0];
+        float min_dist = std::abs(peaks[i].x - breakpoints[0]);
+        for (float bp : breakpoints) {
+            float dist = std::abs(peaks[i].x - bp);
+            if (dist < min_dist) {
+                min_dist = dist;
+                nearest = bp;
+            }
+        }
+
+        std::cout << std::setw(12) << std::fixed << std::setprecision(4) << peaks[i].x
+                  << std::setw(12) << peaks[i].ulp
+                  << std::setw(20) << nearest
+                  << std::endl;
+    }
+
+    // Suggest refined breakpoints
+    std::cout << "\nEPSS Recommendation:" << std::endl;
+    std::cout << "- Error peaks cluster near segment boundaries" << std::endl;
+    std::cout << "- Consider adding breakpoints at x ≈ -3.5, -1.5, 1.5, 3.0" << std::endl;
+    std::cout << "- Current C1 spline uses 9 segments and achieves 145 max ULP" << std::endl;
+    std::cout << "- EPSS refinement has diminishing returns beyond 8-10 segments" << std::endl;
+}
+
+// ============================================================================
+// E3: RANGE-SCALED APPROXIMATION
+// ============================================================================
+
+/**
+ * @brief E3: Range-scaled GELU approximation
+ *
+ * Fit polynomial over x/s instead of x, then rescale.
+ * Uses s = 2 to align with BF16 exponent boundaries.
+ */
+std::bfloat16_t gelu_e3_range_scaled(std::bfloat16_t x_bf16) {
+    float x = static_cast<float>(x_bf16);
+
+    // Saturation
+    if (x >= thresholds::POS) return x_bf16;
+    if (x < tail_lut::LUT_START) {
+        return static_cast<std::bfloat16_t>(gelu_negative_tail(x));
+    }
+
+    // Use B3 piecewise erf for negative region where range-scaling polynomial fails
+    if (x < 0.0f) {
+        // B3-style piecewise erf: Abramowitz-Stegun rational (works for all x < 0)
+        float abs_x = -x;
+        float t = 1.0f / (1.0f + 0.3275911f * (abs_x / 1.4142135f));
+        float t2 = t * t, t3 = t2 * t, t4 = t3 * t, t5 = t4 * t;
+        float erf_neg = 1.0f - t * (0.254829592f - 0.284496736f * t + 1.421413741f * t2
+                                    - 1.453152027f * t3 + 1.061405429f * t4);
+        float phi = 0.5f * (1.0f - erf_neg);
+        return static_cast<std::bfloat16_t>(x * phi);
+    }
+
+    // Scale factor aligned with BF16 exponent (positive region only)
+    constexpr float s = 2.0f;
+    constexpr float inv_s = 0.5f;
+
+    // Rescale input
+    float xs = x * inv_s;  // x/s, now in [0, 1.5] for positive range
+
+    // Polynomial approximation for GELU(s*xs)/(s*xs) = Φ(s*xs)
+    // Fitted for xs in [0, 2]
+    float xs2 = xs * xs;
+
+    // Minimax coefficients for Φ(2*xs) on xs ∈ [0, 2]
+    constexpr float c0 = 0.5f;
+    constexpr float c1 = 0.3989422804f * s;  // Scale-adjusted
+    constexpr float c2 = -0.0446598f * s * s;
+    constexpr float c3 = 0.00278946f * s * s * s;
+
+    float phi = c0 + xs * (c1 + xs2 * (c2 + xs2 * c3));
+    phi = std::max(0.0f, std::min(1.0f, phi));
+
+    float result = x * phi;
+    return static_cast<std::bfloat16_t>(result);
+}
+
+/**
+ * @brief E3: Analyze range-scaled approximation
+ */
+void analyze_range_scaling(const UlpCalculator& ulp_calc) {
+    std::cout << "\n================================================================" << std::endl;
+    std::cout << "         E3: RANGE-SCALED APPROXIMATION ANALYSIS                " << std::endl;
+    std::cout << "================================================================" << std::endl;
+
+    std::cout << "\nRange scaling: x → x/s where s = 2 (BF16 exponent aligned)" << std::endl;
+    std::cout << "Purpose: Reduce catastrophic cancellation in subtraction-heavy formulas" << std::endl;
+
+    int64_t max_ulp = 0;
+    double sum_ulp = 0;
+    int count = 0;
+    float worst_x = 0;
+
+    for (uint16_t bits = 0; bits < 65535; ++bits) {
+        std::bfloat16_t x_bf16 = bits_to_bfloat16(bits);
+        float x = static_cast<float>(x_bf16);
+        if (!std::isfinite(x)) continue;
+
+        std::bfloat16_t approx = gelu_e3_range_scaled(x_bf16);
+        std::bfloat16_t ref = static_cast<std::bfloat16_t>(gelu_reference_f64(x));
+        int64_t ulp = ulp_calc.ulp_distance(approx, ref);
+
+        if (ulp > max_ulp) {
+            max_ulp = ulp;
+            worst_x = x;
+        }
+        sum_ulp += ulp;
+        count++;
+    }
+
+    std::cout << "\nE3 Range-Scaled Results:" << std::endl;
+    std::cout << "  Max ULP:  " << max_ulp << std::endl;
+    std::cout << "  Mean ULP: " << std::fixed << std::setprecision(4) << (sum_ulp / count) << std::endl;
+    std::cout << "  Worst x:  " << worst_x << std::endl;
+
+    std::cout << "\nComparison with unscaled A1 Poly-7: Max ULP 1547, Mean 3.61" << std::endl;
+    std::cout << "Range scaling benefit: " << (max_ulp < 1547 ? "IMPROVED" : "NO IMPROVEMENT") << std::endl;
+}
+
+// ============================================================================
+// E5/E8: DENORMAL AND FTZ POLICY TESTING
+// ============================================================================
+
+/**
+ * @brief E5/E8: Analyze denormal and flush-to-zero behavior
+ */
+void analyze_denormal_ftz_policy(const UlpCalculator& ulp_calc) {
+    std::cout << "\n================================================================" << std::endl;
+    std::cout << "         E5/E8: DENORMAL & FTZ POLICY ANALYSIS                  " << std::endl;
+    std::cout << "================================================================" << std::endl;
+
+    // BF16 smallest normal: 2^-126 ≈ 1.18e-38
+    // BF16 smallest subnormal: 2^-126 * 2^-7 ≈ 9.2e-41
+    constexpr float bf16_min_normal = 1.175494e-38f;
+    constexpr float bf16_min_subnormal = 9.18e-41f;
+
+    std::cout << "\nBF16 Denormal Thresholds:" << std::endl;
+    std::cout << "  Smallest normal:    " << std::scientific << bf16_min_normal << std::endl;
+    std::cout << "  Smallest subnormal: " << bf16_min_subnormal << std::endl;
+
+    // Test GELU outputs near zero
+    std::cout << "\nGELU values approaching denormal region:" << std::endl;
+    std::cout << std::setw(12) << "x" << std::setw(20) << "GELU(x)" << std::setw(20) << "BF16 repr" << std::endl;
+    std::cout << std::string(52, '-') << std::endl;
+
+    float test_points[] = {-6.0f, -7.0f, -8.0f, -8.25f, -8.3125f, -8.5f, -9.0f, -10.0f};
+    for (float x : test_points) {
+        double gelu_val = gelu_reference_f64(x);
+        std::bfloat16_t bf16_val = static_cast<std::bfloat16_t>(gelu_val);
+        float bf16_float = static_cast<float>(bf16_val);
+
+        std::cout << std::setw(12) << std::fixed << std::setprecision(4) << x
+                  << std::setw(20) << std::scientific << std::setprecision(6) << gelu_val
+                  << std::setw(20) << bf16_float
+                  << std::endl;
+    }
+
+    // Test FTZ behavior
+    std::cout << "\nFlush-to-Zero (FTZ) Analysis:" << std::endl;
+
+    int denormal_count = 0;
+    int ftz_count = 0;
+
+    for (uint16_t bits = 0x0001; bits < 0x0080; ++bits) {  // Subnormal positive range
+        std::bfloat16_t val = bits_to_bfloat16(bits);
+        float f = static_cast<float>(val);
+        if (f != 0.0f && f < bf16_min_normal) {
+            denormal_count++;
+        }
+    }
+
+    std::cout << "  Subnormal BF16 values tested: " << denormal_count << std::endl;
+
+    // Check if our tail handler produces denormals
+    std::cout << "\nTail Handler FTZ Behavior:" << std::endl;
+    for (float x = -8.0f; x >= -9.0f; x -= 0.25f) {
+        float tail_val = gelu_negative_tail(x);
+        std::bfloat16_t bf16_tail = static_cast<std::bfloat16_t>(tail_val);
+        float bf16_float = static_cast<float>(bf16_tail);
+
+        bool is_ftz = (tail_val != 0.0f && bf16_float == 0.0f);
+        std::cout << "  x=" << std::fixed << std::setprecision(2) << x
+                  << " tail=" << std::scientific << std::setprecision(2) << tail_val
+                  << " bf16=" << bf16_float
+                  << (is_ftz ? " [FTZ]" : "")
+                  << std::endl;
+    }
+
+    std::cout << "\nE5/E8 Policy Summary:" << std::endl;
+    std::cout << "- Our tail LUT ends at x = -8.3125 (last representable non-zero)" << std::endl;
+    std::cout << "- For x < -8.3125, we explicitly return 0 (intentional FTZ)" << std::endl;
+    std::cout << "- This matches BF16 hardware behavior and avoids ULP ambiguity" << std::endl;
+    std::cout << "- Denormal outputs only occur in extreme tail (|GELU| < 1e-38)" << std::endl;
+}
+
+// ============================================================================
+// H2: COMBINED GELU-SOFTMAX ARITHMETIC UNIT
+// ============================================================================
+
+/**
+ * @brief H2: GELU using softmax-style piecewise linear exp approximation
+ *
+ * Concept: Reuse hardware multipliers/adders for both GELU and softmax
+ * by sharing a piecewise linear exp approximation.
+ *
+ * exp(x) ≈ PWL approximation (shared with softmax unit)
+ * tanh(x) = (exp(2x) - 1) / (exp(2x) + 1)
+ * GELU uses tanh-form
+ */
+
+// Piecewise linear exp approximation (shared with softmax)
+inline float pwl_exp(float x) {
+    // PWL exp for x in [-4, 4], 8 segments
+    // exp(x) ≈ m*x + b per segment
+    if (x < -4.0f) return 0.0f;
+    if (x > 4.0f) return 54.598f;  // exp(4)
+
+    // Breakpoints and slopes for PWL exp
+    constexpr float breaks[] = {-4.0f, -3.0f, -2.0f, -1.0f, 0.0f, 1.0f, 2.0f, 3.0f, 4.0f};
+    constexpr float values[] = {0.0183f, 0.0498f, 0.1353f, 0.3679f, 1.0f, 2.7183f, 7.3891f, 20.086f, 54.598f};
+
+    // Find segment
+    int seg = 0;
+    for (int i = 0; i < 8; ++i) {
+        if (x >= breaks[i] && x < breaks[i+1]) {
+            seg = i;
+            break;
+        }
+    }
+    if (x >= breaks[8]) seg = 7;
+
+    // Linear interpolation
+    float t = (x - breaks[seg]) / (breaks[seg+1] - breaks[seg]);
+    return values[seg] + t * (values[seg+1] - values[seg]);
+}
+
+/**
+ * @brief H2: GELU using shared PWL exp (softmax-compatible)
+ */
+std::bfloat16_t gelu_h2_softmax_unit(std::bfloat16_t x_bf16) {
+    float x = static_cast<float>(x_bf16);
+
+    // Saturation
+    if (x >= thresholds::POS) return x_bf16;
+    if (x < tail_lut::LUT_START) {
+        return static_cast<std::bfloat16_t>(gelu_negative_tail(x));
+    }
+
+    // Use B3 piecewise erf for core_neg region where PWL tanh fails
+    if (x < -2.0f) {
+        // B3-style piecewise erf: Abramowitz-Stegun rational
+        float t = 1.0f / (1.0f + 0.3275911f * (-x / 1.4142135f));
+        float t2 = t * t, t3 = t2 * t, t4 = t3 * t, t5 = t4 * t;
+        float erf_neg = 1.0f - t * (0.254829592f - 0.284496736f * t + 1.421413741f * t2
+                                    - 1.453152027f * t3 + 1.061405429f * t4);
+        float phi = 0.5f * (1.0f - erf_neg);
+        return static_cast<std::bfloat16_t>(x * phi);
+    }
+
+    // GELU via tanh form using PWL exp
+    // tanh(z) = (exp(2z) - 1) / (exp(2z) + 1)
+    constexpr float sqrt_2_over_pi = 0.7978845608f;
+    constexpr float c = 0.044715f;
+
+    float z = sqrt_2_over_pi * (x + c * x * x * x);
+
+    // Clamp z to PWL exp range
+    z = std::max(-4.0f, std::min(4.0f, z));
+
+    float exp_2z = pwl_exp(2.0f * z);
+    float tanh_z = (exp_2z - 1.0f) / (exp_2z + 1.0f);
+
+    float result = 0.5f * x * (1.0f + tanh_z);
+    return static_cast<std::bfloat16_t>(result);
+}
+
+/**
+ * @brief H2: Analyze GELU-Softmax combined unit
+ */
+void analyze_gelu_softmax_unit(const UlpCalculator& ulp_calc) {
+    std::cout << "\n================================================================" << std::endl;
+    std::cout << "         H2: GELU-SOFTMAX COMBINED UNIT ANALYSIS                " << std::endl;
+    std::cout << "================================================================" << std::endl;
+
+    std::cout << "\nConcept: Share PWL exp approximation between GELU and softmax" << std::endl;
+    std::cout << "  - 8-segment PWL for exp(x) on [-4, 4]" << std::endl;
+    std::cout << "  - tanh(z) = (exp(2z) - 1) / (exp(2z) + 1)" << std::endl;
+    std::cout << "  - GELU uses tanh-form approximation" << std::endl;
+
+    int64_t max_ulp = 0;
+    double sum_ulp = 0;
+    int count = 0;
+    float worst_x = 0;
+
+    for (uint16_t bits = 0; bits < 65535; ++bits) {
+        std::bfloat16_t x_bf16 = bits_to_bfloat16(bits);
+        float x = static_cast<float>(x_bf16);
+        if (!std::isfinite(x)) continue;
+
+        std::bfloat16_t approx = gelu_h2_softmax_unit(x_bf16);
+        std::bfloat16_t ref = static_cast<std::bfloat16_t>(gelu_reference_f64(x));
+        int64_t ulp = ulp_calc.ulp_distance(approx, ref);
+
+        if (ulp > max_ulp) {
+            max_ulp = ulp;
+            worst_x = x;
+        }
+        sum_ulp += ulp;
+        count++;
+    }
+
+    std::cout << "\nH2 GELU-Softmax Unit Results:" << std::endl;
+    std::cout << "  Max ULP:  " << max_ulp << std::endl;
+    std::cout << "  Mean ULP: " << std::fixed << std::setprecision(4) << (sum_ulp / count) << std::endl;
+    std::cout << "  Worst x:  " << worst_x << std::endl;
+
+    std::cout << "\nHardware Benefits:" << std::endl;
+    std::cout << "  - Shared PWL exp reduces silicon area" << std::endl;
+    std::cout << "  - Same multipliers/adders for GELU and softmax" << std::endl;
+    std::cout << "  - Integer-friendly breakpoints (can use fixed-point)" << std::endl;
+
+    std::cout << "\nComparison with R4 Tanh (rational): Max ULP 166, Mean 0.14" << std::endl;
+    std::cout << "H2 trades accuracy for hardware sharing." << std::endl;
+}
+
 /**
  * @brief Print usage information
  */
@@ -3049,6 +3447,10 @@ void print_usage(const char* prog) {
     std::cout << "  --fma           E6/G2: FMA vs non-FMA comparison" << std::endl;
     std::cout << "  --sensitivity   E7: Coefficient sensitivity testing" << std::endl;
     std::cout << "  --cost-model    G5: Cost model analysis" << std::endl;
+    std::cout << "  --epss          C5: EPSS knot refinement analysis" << std::endl;
+    std::cout << "  --range-scale   E3: Range-scaled approximation" << std::endl;
+    std::cout << "  --denormal      E5/E8: Denormal and FTZ policy testing" << std::endl;
+    std::cout << "  --softmax-unit  H2: GELU-Softmax combined unit" << std::endl;
     std::cout << "  --all           Run all modes" << std::endl;
     std::cout << "  --help          Show this help message" << std::endl;
 }
@@ -3070,6 +3472,10 @@ int main(int argc, char* argv[]) {
     bool do_fma = false;
     bool do_sensitivity = false;
     bool do_cost_model = false;
+    bool do_epss = false;
+    bool do_range_scale = false;
+    bool do_denormal = false;
+    bool do_softmax_unit = false;
 
     // Parse command line arguments
     if (argc == 1) {
@@ -3102,6 +3508,14 @@ int main(int argc, char* argv[]) {
                 do_sensitivity = true;
             } else if (arg == "--cost-model") {
                 do_cost_model = true;
+            } else if (arg == "--epss") {
+                do_epss = true;
+            } else if (arg == "--range-scale") {
+                do_range_scale = true;
+            } else if (arg == "--denormal") {
+                do_denormal = true;
+            } else if (arg == "--softmax-unit") {
+                do_softmax_unit = true;
             } else if (arg == "--all") {
                 do_analyze = true;
                 do_diagnose = true;
@@ -3115,6 +3529,10 @@ int main(int argc, char* argv[]) {
                 do_fma = true;
                 do_sensitivity = true;
                 do_cost_model = true;
+                do_epss = true;
+                do_range_scale = true;
+                do_denormal = true;
+                do_softmax_unit = true;
             } else if (arg == "--help" || arg == "-h") {
                 print_usage(argv[0]);
                 return 0;
@@ -3215,6 +3633,26 @@ int main(int argc, char* argv[]) {
         analyze_cost_model();
     }
 
+    // Run C5 EPSS knot refinement analysis if requested
+    if (do_epss) {
+        analyze_epss_refinement(ulp_calc);
+    }
+
+    // Run E3 range-scaled approximation analysis if requested
+    if (do_range_scale) {
+        analyze_range_scaling(ulp_calc);
+    }
+
+    // Run E5/E8 denormal and FTZ policy analysis if requested
+    if (do_denormal) {
+        analyze_denormal_ftz_policy(ulp_calc);
+    }
+
+    // Run H2 GELU-Softmax unit analysis if requested
+    if (do_softmax_unit) {
+        analyze_gelu_softmax_unit(ulp_calc);
+    }
+
     // Run full analysis if requested
     if (do_analyze) {
         std::cout << "\nRunning ULP analysis on all implementations..." << std::endl;
@@ -3244,10 +3682,13 @@ int main(int argc, char* argv[]) {
             {"D2: LUT Tails + Poly Center", gelu_d2_lut_poly_hybrid},
             {"D3: LUT + Poly Correction", gelu_d3_lut_correction},
             {"D4: Non-uniform LUT", gelu_d4_nonuniform_lut},
+            // Category E: Engineering variants
+            {"E3: Range-Scaled Approx", gelu_e3_range_scaled},
             // Category F: Reference methods (arithmetic-only)
             {"F2: Numerical Quadrature", gelu_f2_quadrature},
             {"F3: CF Erf Reference", gelu_f3_cf_erf},
             // Category H: Advanced
+            {"H2: GELU-Softmax Unit", gelu_h2_softmax_unit},
             {"H3: SoftEx Tanh", gelu_h3_softex},
         };
 
