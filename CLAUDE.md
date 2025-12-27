@@ -50,19 +50,16 @@ g++ -std=c++23 -O2 -o ulp_calculator ulp_calculator.cpp
 |-------|-----|--------|--------|
 | 0 | F1 | High-precision GELU (float64) | ✓ Complete |
 | 0 | G1 | ULP measurement framework | ✓ Complete |
-| 1 | R1/C4 | Saturation + polynomial core | ⚠ Placeholder coefficients |
-| 1 | R2/A2 | Rational Padé [5/5] | ⚠ Placeholder coefficients |
-| 1 | R3/C3 | Piecewise linear (ISPA) | ⚠ Needs segment optimization |
-| 1 | R4/B2 | Tanh-form + rational tanh | ⚠ Placeholder coefficients |
-| 1 | R5/D1 | LUT + linear interpolation | ✓ Best performer |
+| 0 | G3 | Multi-region error analysis | ✓ Complete |
+| 1 | B1 | Sigmoid-based: x·σ(1.702x) | ✓ Complete |
+| 1 | B1v2 | Quadratic sigmoid variant | ✓ Complete |
+| 1 | R1/C4 | Saturation + poly-9 core | ✓ Improved coefficients |
+| 1 | R2/A2 | Rational Padé | ✓ Improved coefficients |
+| 1 | R3/C3 | Piecewise linear (ISPA) | ✓ Optimized segments |
+| 1 | R4/B2 | Tanh-form + [3,3] Padé tanh | ✓ Improved coefficients |
+| 1 | R5/D1 | LUT (512 entries) + interpolation | ✓ Best performer |
 
 ### Not Yet Implemented
-
-**Phase 1 - Core Baselines:**
-| ID | Method | Priority |
-|----|--------|----------|
-| A1 | Minimax polynomial (Remez-fitted, degrees 5/7/9) | ★★★★★ |
-| B1 | Sigmoid-based: GELU(x) ≈ x·σ(1.702x) | ★★★★☆ |
 
 **Phase 2 - Better ULP Control:**
 | ID | Method | Priority |
@@ -73,37 +70,32 @@ g++ -std=c++23 -O2 -o ulp_calculator ulp_calculator.cpp
 **Phase 3 - BF16 Optimizations (E1-E7):**
 | ID | Optimization | Priority |
 |----|--------------|----------|
-| E1 | Monotonicity/bounds-constrained fitting | ★★★★★ |
+| E1 | Monotonicity/bounds-constrained fitting | ★★★★☆ |
 | E2 | Coefficient quantization to BF16 + refit | ★★★★★ |
-| E3 | Range-scaled approximation | ★★★☆☆ |
 | E6 | FMA-aware coefficient sets (Horner vs Estrin) | ★★★★☆ |
-| E7 | Coefficient sensitivity/robustness testing | ★★★☆☆ |
 
 **Phase 4 - Validation & Training:**
 | ID | Method | Priority |
 |----|--------|----------|
 | G2 | FMA vs non-FMA comparison | ★★★★☆ |
-| G3 | Multi-region error analysis (near-zero/core/tails) | ★★★★☆ |
 | G4 | Backward pass (GELU') | ★★★★☆ |
 | G5 | Cost model (mul/add/div count) | ★★★☆☆ |
 
-**Phase 5 - Advanced:**
-| ID | Method | Priority |
-|----|--------|----------|
-| D2 | LUT tails + polynomial center | ★★★★☆ |
-| H1 | Inverted GELU (for training memory) | ★★★☆☆ |
-
 ## Current Results
 
-| Method | Max ULP | Mean ULP | P99 | Issue |
+| Method | Max ULP | Mean ULP | P99 | Notes |
 |--------|---------|----------|-----|-------|
-| R1 Poly | 15760 | 36.0 | 3 | Coefficients diverge for x<-1 |
-| R2 Rational | 13760 | 21.8 | 5 | Saturation boundary error |
-| R3 PWL | 13760 | 55.7 | 98 | High baseline error |
-| R4 Tanh | 15351 | 44.1 | 1 | tanh approx fails for x<-2 |
-| R5 LUT | 13760 | 18.7 | 0 | Best, limited by saturation |
+| **B1v2 Sigmoid** | 11550 | **11.35** | 40 | **Best mean ULP** |
+| B1 Sigmoid | 11550 | 12.51 | 19 | Simple, good baseline |
+| R2 Rational | 11550 | 12.44 | **4** | **Best P99** |
+| R5 LUT | 13215 | 15.02 | 0 | Best core accuracy |
+| R1 Poly-9 | 13466 | 20.18 | 2 | Good all-around |
+| R4 Tanh | 14850 | 30.98 | 0 | Best core, weak tails |
+| R3 PWL | 11550 | 45.41 | 98 | High near-zero error |
 
-**Root cause of high max-ULP**: At x=-5, GELU(-5)≈-1.4e-6 but approximations return 0. This saturation boundary contributes ~13760 ULP. Extending the negative threshold would reduce max-ULP but add complexity.
+**Saturation thresholds**: x ≥ 4 → x, x ≤ -7 → 0 (extended from -5 to reduce max-ULP)
+
+**Max-ULP analysis**: The 11550-14850 max-ULP comes from the negative saturation boundary (x=-7). GELU(-7)≈-5.5e-11, which rounds to a tiny but non-zero bf16 value, while we return 0.
 
 ## Quick Reference
 
@@ -111,21 +103,33 @@ g++ -std=c++23 -O2 -o ulp_calculator ulp_calculator.cpp
 GELU(x) = x · Φ(x)  where  Φ(x) = 0.5(1 + erf(x/√2))
 
 Saturation thresholds (asymmetric):
-  x ≥ 3  → GELU(x) ≈ x    (Φ(3) = 0.9987)
-  x ≤ -5 → GELU(x) ≈ 0    (Φ(-5) = 2.87e-7)
+  x ≥ 4  → GELU(x) ≈ x    (Φ(4) = 0.99997)
+  x ≤ -7 → GELU(x) ≈ 0    (Φ(-7) ≈ 1.3e-12)
 
-Key approximations from FinalLists.md:
-  tanh(z) ≈ z(27 + z²) / (27 + 9z²)
-  σ(z) ≈ 0.5 + z / (2(1 + |z|))
-  GELU via sigmoid: GELU(x) ≈ x · σ(1.702x)
-  GELU via tanh: GELU(x) ≈ 0.5x(1 + tanh(0.7979(x + 0.0447x³)))
+Key approximations:
+  B1 sigmoid:   GELU(x) ≈ x · σ(1.702x), σ(z) ≈ 0.5 + z/(2(1+|z|))
+  B1v2 sqrt:    GELU(x) ≈ x · [0.5 + 0.5·z/√(1+z²)], z = 1.702x
+  Tanh-form:    GELU(x) ≈ 0.5x(1 + tanh(0.7979(x + 0.0447x³)))
+  tanh approx:  tanh(z) ≈ z·(1 + 0.128z² + ...)/(1 + 0.462z² + ...)
 ```
+
+## G3 Multi-Region Analysis
+
+Regions: near_zero (|x|<0.5), core_pos/neg (0.5≤|x|<3), tail_pos/neg (|x|≥3)
+
+| Method | near_zero | core_pos | core_neg | tail_pos | tail_neg |
+|--------|-----------|----------|----------|----------|----------|
+| B1v2 | 0.93 | 13.91 | 129.44 | 0.01 | 41.05 |
+| R2 | 0.00 | 5.02 | 126.52 | 0.10 | 47.46 |
+| R5 LUT | 0.00 | 0.00 | 0.03 | 0.00 | 60.57 |
+
+(Mean ULP per region; tail_neg dominates max-ULP due to saturation boundary)
 
 ## Design Decisions
 
 1. **Type punning**: Use `std::memcpy()` only (no reinterpret_cast, no unions)
 2. **ULP indexing**: +0 and -0 share same index; NaN/Inf excluded (65280 valid values)
-3. **Saturation**: Asymmetric thresholds (3, -5) based on ULP analysis
+3. **Saturation**: Asymmetric thresholds (4, -7) extended for better max-ULP
 4. **Internal precision**: float32 for calculations, bfloat16 for I/O
 5. **Entire range**: Unlike FinalLists.md's [-8,8], we test all 65280 bf16 values
 
@@ -138,8 +142,6 @@ Key approximations from FinalLists.md:
 
 ## Priority Next Steps
 
-1. **Remez fitting** for R1, R2, R4 coefficients (replace placeholders)
-2. **B1 Sigmoid-based** GELU (simple, good baseline)
-3. **C1 Cubic spline** (expected best ULP control)
-4. **G3 Multi-region analysis** (separate metrics for near-zero/core/tails)
-5. **E2 Coefficient quantization** to validate BF16 hardware behavior
+1. **C1 Cubic spline** (expected best ULP control)
+2. **E2 Coefficient quantization** to validate BF16 hardware behavior
+3. **G4 Backward pass** (GELU') for training support
