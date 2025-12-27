@@ -478,3 +478,78 @@ If violated: τ = 3/√(α² + β²), m0 → τ·α·δ, m1 → τ·β·δ
 - `--regression`: G7/G8 regression suite
 - `--derivative`: G4 backward pass test
 - `--verify-knots`: Debug C1 spline knot values
+
+---
+
+## Session 6: Extended Tail LUT (Max ULP 9904 → 145)
+
+### Problem
+
+Max ULP of 9904 at x ≈ -8.375 was unacceptable for bfloat16's extended dynamic range purpose. The issue was in the deep negative tail where:
+1. GELU values decay exponentially (~10⁻¹⁵ at x = -8)
+2. Original Taylor denominator approximation for exp(-x²/2) failed catastrophically for large |x|
+3. Linear interpolation between sparse LUT points didn't match exponential decay
+
+### Root Cause Analysis
+
+At x = -8.375, exp(-x²/2) requires exp(-35.07) ≈ 6×10⁻¹⁶, but the Taylor denominator approximation:
+```
+exp(-u) ≈ 1 / (1 + u + u²/2 + u³/6 + u⁴/24 + u⁵/120)
+```
+For u = 35 gives 1/507843 ≈ 2×10⁻⁶ — a factor of **3 billion** off!
+
+### Solution: Extended LUT
+
+Replaced the broken exp() approximation with an extended LUT:
+- Coverage: x ∈ [-8.3125, -3.5] (was [-5, -3.5])
+- Resolution: 0.25 step (21 entries, was 7)
+- Underflow boundary: x = -8.3125 (bf16 = 0xa605, last non-zero representation)
+- For x < -8.3125: return 0 (bf16 underflows to -0)
+
+### Implementation Details
+
+```cpp
+namespace tail_lut {
+    // Main LUT: 19 entries at 0.25 step from -3.5 to -8.0
+    // Extended entry at x = -8.25 (bf16 = 0xa604)
+    // Final entry at x = -8.3125 (bf16 = 0xa605, ~-2.12e-16)
+    constexpr float LUT[21] = { ... };
+    constexpr float LUT_END = -8.3125f;  // Was -8.5f
+}
+
+inline float gelu_negative_tail(float x) {
+    if (x < LUT_END) return 0.0f;  // bf16 underflows
+    // Two-tier interpolation: main + final irregular segment
+    ...
+}
+```
+
+### Results
+
+| Method | Old Max ULP | New Max ULP | Improvement |
+|--------|-------------|-------------|-------------|
+| **C1 Spline** | 9904 | **145** | 68× |
+| **B3 Erf** | 9904 | **145** | 68× |
+| R4 Tanh | 9904 | 166 | 60× |
+| B1v2 Sigmoid | 9904 | 625 | 16× |
+| R2 Rational | 9904 | 1139 | 8.7× |
+
+Worst cases now occur at:
+- x ≈ -8.3125: Transition to bf16 underflow (145 ULP)
+- x ≈ -3.5: Boundary between core and tail handler (166 ULP for R4)
+
+### Key Insights
+
+1. **Don't approximate exp() for large arguments**: Taylor series and Padé approximants fail spectacularly. Use precomputed LUT instead.
+
+2. **Track bf16 underflow boundary**: At x ≈ -8.35, bf16 underflows to -0 (0x8000). The LUT must end just before this point.
+
+3. **Calibration is critical**: The --calibrate mode shows exact GELU values and their bf16 representations at each x, essential for debugging.
+
+4. **Mean ULP also improved**: With better tail handling, mean ULP dropped from 0.60 to 0.13 for top methods.
+
+### Files Modified
+- `gelu_implementations.cpp`: Extended tail_lut namespace, improved gelu_negative_tail()
+- `CLAUDE.md`: Updated results table and tail handling description
+- `README.md`: Updated Key Achievements and Max ULP Analysis
+- `HISTORY.md`: This session documentation
