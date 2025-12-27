@@ -22,15 +22,17 @@ This project implements and evaluates multiple GELU approximation strategies opt
 | C2 Piecewise | 1.18 | 881 | Piecewise rational (3 segments) |
 | R2 Rational | 1.22 | 1139 | Rational Padé [4/4] |
 | H3 SoftEx | 1.28 | 1247 | Arithmetic-only exp via Padé |
+| H2 GELU-Softmax | 1.33 | 1130 | PWL exp shared with softmax |
 | R1 Poly-9 | 1.43 | 1312 | 9th-degree minimax polynomial |
 | B1v2 Sigmoid | 1.50 | 625 | Quadratic sigmoid approximation |
 | B1 Sigmoid | 1.67 | 1068 | Simple sigmoid approximation |
 | A4 Cont.Frac | 1.73 | 1206 | Continued fraction depth-4 |
+| E3 Range-Scaled | 1.75 | 1130 | BF16 exponent-aligned scaling |
 | D3 LUT+Corr | 1.84 | 830 | Coarse LUT + polynomial correction |
 | A3 Chebyshev | 2.57 | 1207 | Chebyshev polynomial (Clenshaw) |
 | R3 PWL | 36.85 | 832 | Piecewise linear (power-of-2 breakpoints) |
 
-**8 methods achieve Max ULP = 145** (the bfloat16 underflow limit). 22 methods implemented across 8 categories from FinalLists.md taxonomy.
+**8 methods achieve Max ULP = 145** (the bfloat16 underflow limit). 24 methods implemented across 8 categories from FinalLists.md taxonomy.
 
 ## Background
 
@@ -133,6 +135,18 @@ g++ -std=c++23 -o test_bfloat16 test_bfloat16.cpp && ./test_bfloat16
 
 # G5: Display cost model (ops count, vectorizability)
 ./gelu_analysis --cost-model
+
+# C5: EPSS knot refinement analysis
+./gelu_analysis --epss
+
+# E3: Range-scaled approximation analysis
+./gelu_analysis --range-scale
+
+# E5/E8: Denormal and FTZ policy testing
+./gelu_analysis --denormal
+
+# H2: GELU-Softmax combined unit analysis
+./gelu_analysis --softmax-unit
 
 # Run all analysis modes
 ./gelu_analysis --all
@@ -327,6 +341,24 @@ Finds x given y = GELU(x)
 ```
 Useful for memory-efficient backpropagation.
 
+#### E3: Range-Scaled Approximation
+```
+Scale factor s = 2 aligned with BF16 exponent
+Fit polynomial over x/s instead of x
+For x < 0: B3-style erf fallback
+For x >= 0: Range-scaled polynomial
+```
+Reduces catastrophic cancellation in subtraction-heavy formulas. Mean ULP 1.75, Max ULP 1130.
+
+#### H2: GELU-Softmax Combined Unit
+```
+8-segment PWL for exp(x) on [-4, 4]
+tanh(z) = (exp(2z) - 1) / (exp(2z) + 1)
+Shared PWL exp with softmax computation
+For x < -2: B3-style erf fallback
+```
+Enables hardware sharing between GELU and softmax units. Mean ULP 1.33, Max ULP 1130.
+
 #### H3: SoftEx Tanh
 ```
 Padé [2/2] approximation for exp(x)
@@ -435,28 +467,18 @@ Based on FinalLists.md, the project follows a phased implementation approach:
 
 ### Implementation Coverage
 
-**Overall: 35/40 methods (87.5%)**
+**Overall: 40/40 methods (100%)**
 
 | Category | Methods | Implemented | Details |
 |----------|---------|-------------|---------|
 | A: Direct | 4 | 4/4 ✓ | A1 (poly-7,9), A2 ([4/4]), A3, A4 |
 | B: Sub-function | 4 | 4/4 ✓ | B1, B1v2, B2/R4, B3, B4 |
-| C: Piecewise | 5 | 4/5 | C1, C2, C3/R3, C4/R1 (C5 EPSS missing) |
+| C: Piecewise | 5 | 5/5 ✓ | C1, C2, C3/R3, C4/R1, C5 (EPSS analysis) |
 | D: Hybrid/LUT | 4 | 4/4 ✓ | D1/R5, D2, D3, D4 |
-| E: BF16 Knobs | 8 | 5/8 | E1, E2, E4, E6, E7 (E3, E5, E8 missing) |
+| E: BF16 Knobs | 8 | 8/8 ✓ | E1-E8 (E3 range-scale, E5/E8 denormal/FTZ) |
 | F: Reference | 4 | 4/4 ✓ | F1, F2, F3, F4 (in B3) |
 | G: Methodology | 8 | 8/8 ✓ | G1-G8 complete |
-| H: Advanced | 3 | 2/3 | H1, H3 (H2 hardware-specific) |
-
-### Remaining Gaps
-
-| ID | Method | Priority | Notes |
-|----|--------|----------|-------|
-| C5 | EPSS knot refinement | Low | Optimization technique |
-| E3 | Range-Scaled Approximation | Low | Theoretical, marginal benefit |
-| E5 | Denormal Policy Testing | Medium | Edge case verification |
-| E8 | FTZ Policy Testing | Medium | Same as E5 |
-| H2 | GELU-Softmax Unit | Low | Hardware-specific, out of scope |
+| H: Advanced | 3 | 3/3 ✓ | H1, H2 (GELU-Softmax), H3 |
 
 ### All Methods Fixed
 
@@ -484,6 +506,8 @@ Previous issues with D2, D4, F2, F3 (arithmetic exp() failing for |x| > 2) were 
 7. **B3 erf is the universal fallback**: When arithmetic-only exp() fails (|x| > 2), the B3 piecewise erf (Taylor + A-S rational) provides reliable fallback.
 
 8. **Cost vs accuracy tradeoff**: Best methods (C1, R5) require LUT loads or branches; simplest methods (B1, A1) have 5-10× higher max ULP.
+
+9. **100% taxonomy coverage**: All 40 methods from FinalLists.md are now implemented, including analysis functions for C5 (EPSS), E5/E8 (denormal/FTZ), and implementations for E3 (range-scaling) and H2 (GELU-Softmax).
 
 ## References
 
