@@ -10,6 +10,8 @@ This project implements and evaluates multiple GELU approximation strategies opt
 
 | Method | Mean ULP | Max ULP | Description |
 |--------|----------|---------|-------------|
+| **C1 Spline** | **0.60** | 9904 | 9-segment Hermite + Taylor near-zero |
+| **B3 Erf Poly** | **0.61** | 9904 | Piecewise erf (Taylor + A-S rational) |
 | **R4 Tanh** | **0.61** | 9904 | Tanh-form + [3,3] Padé approximation |
 | R2 Rational | 1.69 | 9904 | Rational Padé [4/4] |
 | R1 Poly-9 | 1.90 | 9904 | 9th-degree minimax polynomial |
@@ -283,18 +285,17 @@ Based on FinalLists.md, the project follows a phased implementation approach:
 | Phase | Focus | Status |
 |-------|-------|--------|
 | 0 | Infrastructure (F1, G1, G3) | Complete |
-| 1 | Core baselines (A1, A2, B1, C4) | Complete |
-| 2 | ULP control (C1, C3, B2) | Partial |
+| 1 | Core baselines (A1, A2, B1, B3, C4) | Complete |
+| 2 | ULP control (C1, C3, B2) | Complete |
 | 3 | BF16 optimizations (E1-E7) | Not started |
-| 4 | Validation (G2, G4, G5) | Not started |
+| 4 | Validation (G2, G4, G5, G7/G8) | Partial (G4, G7/G8 done) |
 | 5 | Advanced (D2-D4, H1-H3) | Not started |
 
 ### Future Work
 
-1. **C1 Cubic Spline**: Expected best local ULP control with 8-16 segments
-2. **E2 Coefficient Quantization**: Validate hardware behavior with bf16 coefficients
-3. **G4 Backward Pass**: Implement GELU'(x) for training support
-4. **FMA Comparison**: Measure impact of fused multiply-add
+1. **E2 Coefficient Quantization**: Validate hardware behavior with bf16 coefficients
+2. **C2 Piecewise Rational**: 3-5 segment rational functions
+3. **G2 FMA Comparison**: Measure impact of fused multiply-add
 
 ## Key Insights
 
@@ -308,7 +309,7 @@ Based on FinalLists.md, the project follows a phased implementation approach:
 
 5. **Entire range testing**: Methods optimized for [-8, 8] may fail catastrophically outside this range
 
-6. **Tanh-form excels**: R4's [3,3] Padé tanh approximation achieves best mean ULP (0.61)
+6. **Three methods tie for best**: C1 Spline (0.60), B3 Erf (0.61), and R4 Tanh (0.61) all achieve excellent accuracy
 
 ## References
 
