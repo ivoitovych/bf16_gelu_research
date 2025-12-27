@@ -2,169 +2,89 @@
 
 ## Overview
 
-Systematic ULP (Units in Last Place) error analysis of GELU approximations for bfloat16 floating-point arithmetic, targeting ML accelerator frameworks.
+Systematic ULP error analysis of GELU approximations for bfloat16 arithmetic. See [README.md](README.md) for full documentation.
 
-**Key constraint**: Analysis covers the **entire bfloat16 range** (65280 valid values, ~±3.4e38), not just typical activation ranges like [-8, 8].
+**Key constraint**: Analysis covers the **entire bfloat16 range** (65280 valid values, ~±3.4e38), not just [-8, 8].
 
-## Build
+## Build & Run
 
 ```bash
 # Requirements: GCC 13+ with C++23 support
 
-# Build GELU analysis tool
+# Build and run
 g++ -std=c++23 -O3 -march=native -o gelu_analysis gelu_implementations.cpp -lm
-
-# Build ULP calculator (standalone)
-g++ -std=c++23 -O2 -o ulp_calculator ulp_calculator.cpp
-
-# Run analysis
 ./gelu_analysis --analyze      # Full ULP analysis (24 methods)
-./gelu_analysis --diagnose     # Diagnostic mode
-./gelu_analysis --reference    # Show reference values
-./gelu_analysis --saturation   # Analyze saturation boundaries
-./gelu_analysis --calibrate    # Compute tail LUT values
-./gelu_analysis --regression   # G7/G8 regression suite
-./gelu_analysis --derivative   # G4 backward pass test
-./gelu_analysis --verify-knots # Debug C1 spline knots
-./gelu_analysis --quantization # E2: Coefficient quantization
-./gelu_analysis --fma          # E6/G2: FMA vs non-FMA comparison
-./gelu_analysis --sensitivity  # E7: Coefficient sensitivity
-./gelu_analysis --cost-model   # G5: Operation cost model
-./gelu_analysis --epss         # C5: EPSS knot refinement
-./gelu_analysis --range-scale  # E3: Range-scaled approximation
-./gelu_analysis --denormal     # E5/E8: Denormal and FTZ testing
-./gelu_analysis --softmax-unit # H2: GELU-Softmax combined unit
-./gelu_analysis --all          # All modes
+./gelu_analysis --all          # All analysis modes
+
+# Other modes: --diagnose, --reference, --saturation, --calibrate,
+# --regression, --derivative, --verify-knots, --quantization, --fma,
+# --sensitivity, --cost-model, --epss, --range-scale, --denormal,
+# --softmax-unit, --tail-debug
 ```
 
 ## Project Structure
 
 | File | Description |
 |------|-------------|
-| `gelu_implementations.cpp` | GELU approximations (R1-R5) + analysis framework |
-| `ulp_calculator.cpp` | Reference ULP calculator with lookup table |
-| `test_bfloat16.cpp` | Compiler bfloat16 support verification |
-| `FinalLists.md` | Strategy taxonomy (Categories A-H, 40 methods) |
-| `CLAUDE.md` | Project instructions (this file) |
-| `HISTORY.md` | Development history and decisions |
+| `gelu_implementations.cpp` | All implementations + analysis framework |
+| `ulp_calculator.cpp` | Standalone ULP calculator |
+| `debug_tools.cpp` | Exploratory debugging tools |
+| `FinalLists.md` | Strategy taxonomy (40 methods, 8 categories) |
+| `README.md` | Full documentation and results |
+| `HISTORY.md` | Development history (12 sessions) |
+| `CLAUDE.md` | This file - project instructions |
 
-## Approximation Constraints
+## Constraints
 
 - **Allowed**: `+`, `−`, `×`, `÷`, `|x|`, `sign()`
-- **Prohibited**: `erf()`, `tanh()`, `exp()`, `log()`
+- **Prohibited**: `erf()`, `tanh()`, `exp()`, `log()` (except reference)
 - **Target**: BFloat16 (1 sign + 8 exponent + 7 mantissa bits)
 - **Metric**: ULP error (worst-case max-ULP), not MSE
 
-## Implementation Status vs FinalLists.md
+## Current Status
 
-### Coverage: 40/40 methods (100%)
+**100% taxonomy coverage (40/40 methods). Best: B3 Pure with Max ULP = 33.**
 
-| Category | Total | Done | Methods Implemented |
-|----------|-------|------|---------------------|
-| **A: Direct** | 4 | 4 ✓ | A1 (poly-7, poly-9), A2 ([4/4]), A3 (Chebyshev), A4 (CF) |
-| **B: Sub-function** | 4 | 4 ✓ | B1, B1v2 (sigmoid), B2/R4 (tanh), B3 (erf), B4 (rational erf) |
-| **C: Piecewise** | 5 | 5 ✓ | C1 (spline), C2 (rational), C3/R3 (PWL), C4/R1 (sat+core), C5 (EPSS) |
-| **D: Hybrid/LUT** | 4 | 4 ✓ | D1/R5 (LUT), D2 (LUT+erf), D3 (LUT+corr), D4 (nonuniform) |
-| **E: BF16 Knobs** | 8 | 8 ✓ | E1-E8 all complete (E3 range-scale, E5/E8 denormal/FTZ) |
-| **F: Reference** | 4 | 4 ✓ | F1 (float64), F2 (quadrature), F3 (CF erf), F4 (in B3) |
-| **G: Methodology** | 8 | 8 ✓ | G1-G8 all complete |
-| **H: Advanced** | 3 | 3 ✓ | H1 (inverse), H2 (GELU-Softmax), H3 (SoftEx) |
+See [README.md](README.md) for complete results table with per-region analysis.
 
-### Best Performers (Max ULP ≤ 100)
+### Top Methods
 
-| ID | Method | Mean ULP | Max ULP |
-|----|--------|----------|---------|
-| **R5** | LUT + two-tier tail | **0.07** | **87** |
-| **C1** | Cubic spline (9-seg) | **0.10** | **87** |
-| **B3** | Erf polynomial (A-S) | **0.11** | **87** |
-| **D2** | LUT tails + B3 erf | 0.11 | 87 |
-| **F2** | Quadrature + B3 erf | 0.11 | 87 |
-| **R4** | Tanh-form + Padé | 0.11 | 166 |
-| **F3** | CF + B3 erf fallback | 0.12 | 87 |
-| **D4** | Non-uniform LUT | 0.60 | 88 |
+| Method | Max ULP | Notes |
+|--------|---------|-------|
+| **B3 Pure** | **33** | Best - asymptotic expansion, no LUT |
+| R5/C1/B3/D2/F2/F3 | 87 | Limited by tail LUT interpolation |
+| D4 | 88 | Non-uniform LUT |
+| R4 | 166 | Boundary at x=-3.5 |
 
-## Current Results
+### Key Technical Achievements
 
-| Method | Max ULP | Mean ULP | P99 | Notes |
-|--------|---------|----------|-----|-------|
-| **R5 LUT** | **87** | **0.07** | 0 | **Best overall** - 512 entries + two-tier tail |
-| **C1 Cubic Spline** | **87** | **0.10** | 0 | 9-seg Hermite + Taylor near-zero |
-| **B3 Erf Polynomial** | **87** | **0.11** | 0 | Piecewise erf (Taylor + rational) |
-| **D2 LUT+Erf** | **87** | **0.11** | 0 | LUT tails + B3-style erf core |
-| **F2 Quadrature** | **87** | **0.11** | 0 | Gauss-Legendre + B3 erf fallback |
-| **R4 Tanh** | 166 | 0.11 | 0 | Tanh-form + [3,3] Padé |
-| **F3 CF Erf** | **87** | **0.12** | 0 | Continued fraction + B3 erf fallback |
-| **D4 Non-uniform** | **88** | **0.60** | 28 | Non-uniform LUT + Taylor near-zero |
-| B4 Rational Erf | 535 | 0.56 | 2 | Range-reduced rational |
-| B1v2 Sigmoid | 625 | 1.47 | 34 | Quadratic sigmoid |
-| D3 LUT+Corr | 830 | 1.82 | 41 | Coarse LUT + correction |
-| R3 PWL | 832 | 36.82 | 97 | High near-zero error |
-| C2 Piecewise | 881 | 1.15 | 1 | Piecewise rational |
-| B1 Sigmoid | 1068 | 1.64 | 18 | Simple sigmoid |
-| R2 Rational | 1139 | 1.19 | 2 | Rational Padé |
-| **E3 Range-Scaled** | 1130 | 1.72 | 10 | BF16 exponent-aligned scaling |
-| **H2 GELU-Softmax** | 1130 | 1.30 | 9 | PWL exp shared with softmax |
-| A4 Cont.Frac | 1206 | 1.71 | 15 | Continued fraction |
-| A3 Chebyshev | 1207 | 2.54 | 45 | Chebyshev (Clenshaw) |
-| H3 SoftEx | 1247 | 1.26 | 1 | Arithmetic exp via Padé |
-| R1 Poly-9 | 1312 | 1.40 | 1 | Polynomial core |
-| A1 Direct Poly | 1404-1547 | 3.55-3.58 | 30 | Direct polynomial (7th/9th degree) |
-
-**Saturation thresholds**: x ≥ 3 → x, x ≤ -9 → 0
-
-**Tail handling**: Two-tier LUT from x=-3.5 to x=-8.3125: main region 0.25-step, fine region 0.0625-step near underflow. For x < -8.3125, bf16 underflows to -0.
+1. **erfc-based reference**: Avoids catastrophic cancellation in `1 + erf(z)` for large negative z
+2. **Asymptotic expansion**: `GELU(x) ≈ -φ(x)·(1 - 1/x² + 3/x⁴ - 15/x⁶)` beats LUT for deep tail
+3. **Two-tier tail LUT**: 0.25-step main + 0.0625-step fine near underflow boundary
 
 ## Quick Reference
 
 ```
 GELU(x) = x · Φ(x)  where  Φ(x) = 0.5(1 + erf(x/√2))
 
-Saturation thresholds (asymmetric):
-  x ≥ 3  → GELU(x) ≈ x    (Φ(3) = 0.99865)
-  x ≤ -9 → GELU(x) ≈ 0    (bf16(GELU(-9)) = -0)
+Reference (avoids cancellation for negative x):
+  if (x >= 0): Φ(x) = 0.5 * (1 + erf(x/√2))
+  if (x < 0):  Φ(x) = 0.5 * erfc(-x/√2)
 
-Tail handling (x ∈ [-8.3125, -3.5]):
-  - Extended LUT with 21 calibration points (0.25 step)
-  - Linear interpolation between points
-  - For x < -8.3125, bf16 underflows to -0
+Saturation thresholds:
+  x ≥ 3  → GELU(x) = x
+  x ≤ -9 → GELU(x) = 0
 
-Key approximations:
-  C1 Spline:    9-segment Hermite + Taylor near-zero [BEST: 0.10 mean ULP, 87 max ULP]
-  B3 Erf:       Piecewise erf (Taylor |z|<1, A-S rational |z|≥1) [0.11 mean ULP, 87 max ULP]
-  R4 Tanh:      GELU(x) ≈ 0.5x(1 + tanh(0.7979(x + 0.0447x³))) [0.14 mean ULP, 166 max ULP]
-  tanh approx:  tanh(z) ≈ z·(1 + 0.128z² + ...)/(1 + 0.462z² + ...) [3,3] Padé
+Deep tail (x < -8.3125):
+  GELU(x) ≈ -exp(-x²/2)/√(2π) · (1 - 1/x² + 3/x⁴ - 15/x⁶)
 ```
-
-## G3 Multi-Region Analysis
-
-Regions: near_zero (|x|<0.5), core_pos/neg (0.5≤|x|<3), tail_pos/neg (|x|≥3)
-
-| Method | near_zero | core_pos | core_neg | tail_pos | tail_neg |
-|--------|-----------|----------|----------|----------|----------|
-| **R5 LUT** | **0.00** | **0.00** | **0.03** | 0.00 | 0.39 |
-| **C1 Spline** | 0.00 | 0.07 | 4.09 | 0.00 | 0.41 |
-| **B3 Erf** | 0.00 | 0.04 | 2.03 | 0.00 | 0.50 |
-| **D2 LUT+Erf** | 0.00 | 0.04 | 2.03 | 0.00 | 0.50 |
-| **F2 Quadrature** | 0.00 | 0.12 | 1.94 | 0.00 | 0.50 |
-| **R4 Tanh** | 0.00 | 0.03 | 1.75 | 0.00 | 0.53 |
-
-(Mean ULP per region. All top methods use extended tail LUT for tail_neg.)
-
-## Design Decisions
-
-1. **Type punning**: Use `std::memcpy()` only (no reinterpret_cast, no unions)
-2. **ULP indexing**: +0 and -0 share same index; NaN/Inf excluded (65280 valid values)
-3. **Saturation**: Asymmetric thresholds (3, -9) with specialized tail LUT for [-8.3125, -3.5]
-4. **Internal precision**: float32 for calculations, bfloat16 for I/O
-5. **Entire range**: Unlike FinalLists.md's [-8,8], we test all 65280 bf16 values
-6. **Tail handling**: LUT-based interpolation for negative tail where approximations fail
 
 ## Code Guidelines
 
-- Extensive comments explaining rationale
+- Use `std::memcpy()` for type punning (no reinterpret_cast, no unions)
 - `static_assert` for compile-time type verification
-- Reusable tests integrated in main files (no standalone scripts)
-- **Exploratory tests must be added to existing tools** (e.g., new `--mode` flags), not standalone scripts that require permission each run
+- Add new tests as `--mode` flags, not standalone scripts
+- Extensive comments explaining rationale
 
 ## Git Commit Rules
 
@@ -172,17 +92,12 @@ Regions: near_zero (|x|<0.5), core_pos/neg (0.5≤|x|<3), tail_pos/neg (|x|≥3)
 - Do NOT add "Generated with Claude Code" footer
 - Do NOT add "Co-Authored-By: Claude" lines
 - Do NOT mention AI, Claude, or LLM in commit messages
-- Keep commit messages clean and professional
 
-## Project Status
+## Development History
 
-**All phases complete. 100% taxonomy coverage (40/40 methods).**
-
-8 methods achieve Max ULP ≤ 88 (improved via two-tier tail LUT):
-- R5 LUT (0.10 mean), C1 Spline (0.13), B3 Erf (0.13), D2 LUT+Erf (0.13)
-- F2 Quadrature (0.13), R4 Tanh (0.14, max 166), F3 CF Erf (0.15), D4 Non-uniform (0.63)
-
-24 GELU implementations + analysis tools:
-- Core methods: `--analyze` (24 implementations with G3 region analysis)
-- Engineering: `--quantization`, `--fma`, `--sensitivity`, `--cost-model`
-- Gap closures: `--epss`, `--range-scale`, `--denormal`, `--softmax-unit`
+See [HISTORY.md](HISTORY.md) for detailed session-by-session development notes covering:
+- Sessions 1-3: Initial implementation, gap analysis, improvements
+- Sessions 4-6: Tail handler, bug fixes, extended tail LUT (Max ULP 9904→145)
+- Sessions 7-10: Complete taxonomy coverage (40/40 methods)
+- Session 11: Two-tier LUT fix (Max ULP 145→87)
+- Session 12: erfc + asymptotic expansion (Max ULP 87→33 for B3 Pure)

@@ -1116,3 +1116,160 @@ The original Max ULP of 145 was NOT an inherent limitation of bf16 representatio
 2. Insufficient resolution near the underflow boundary
 
 With correct values and finer resolution, Max ULP dropped to 87 (linear interpolation error).
+
+---
+
+## Session 12: erfc + Asymptotic Expansion (Max ULP 87→33)
+
+### Objective
+Fix remaining high ULP errors in the deep negative tail and achieve best possible accuracy.
+
+### Critical Discovery: Catastrophic Cancellation in Reference
+
+The reference function `gelu_reference_f64()` had a fundamental numerical issue:
+
+```cpp
+// BEFORE (broken for large negative x):
+double phi = 0.5 * (1.0 + std::erf(x / sqrt(2.0)));
+```
+
+For large negative x (e.g., x = -8), `erf(z) → -1`, so `1 + erf(z) → 0`. This causes **catastrophic cancellation** where most significant digits are lost.
+
+**Example at x = -8.375:**
+- `erf(-5.92) ≈ -0.9999999999999988`
+- `1 + erf = 0.0000000000000012` (only ~2 significant digits remain!)
+- True GELU ≈ -4.6e-16, but naive formula gives wrong result
+
+### Solution 1: erfc-Based Reference
+
+For negative x, use `erfc(-z)` instead of `1 + erf(z)`:
+
+```cpp
+double gelu_reference_f64(double x) {
+    double z = x * INV_SQRT_2;
+    double phi;
+    if (x >= 0) {
+        phi = 0.5 * (1.0 + std::erf(z));
+    } else {
+        // erfc(-z) = 1 - erf(-z) = 1 + erf(z), but computed directly
+        phi = 0.5 * std::erfc(-z);
+    }
+    return x * phi;
+}
+```
+
+**Why this works:** `erfc(z)` is computed directly without subtraction from 1, avoiding cancellation.
+
+### Solution 2: Asymptotic Expansion for Deep Tail
+
+For x < -8.3125 (beyond LUT range), use the asymptotic expansion:
+
+```cpp
+// GELU(x) ≈ -φ(x) * (1 - 1/x² + 3/x⁴ - 15/x⁶)
+// where φ(x) = exp(-x²/2) / √(2π)
+inline float gelu_asymptotic(float x) {
+    float x2 = x * x;
+    float exp_val = fast_exp_neg(x2 * 0.5f);  // via 2^x bit manipulation
+    if (exp_val == 0.0f) return 0.0f;
+
+    float phi_x = exp_val * INV_SQRT_2PI;
+    float inv_x2 = 1.0f / x2;
+    float inv_x4 = inv_x2 * inv_x2;
+    float inv_x6 = inv_x4 * inv_x2;
+    float correction = 1.0f - inv_x2 + 3.0f * inv_x4 - 15.0f * inv_x6;
+
+    return -phi_x * correction;
+}
+```
+
+The `fast_exp_neg()` function uses IEEE754 bit manipulation:
+```cpp
+inline float fast_exp2_neg(float x) {
+    if (x < -126.0f) return 0.0f;
+    float n = std::floor(x);
+    float f = x - n;
+    // Taylor for 2^f: 1 + 0.693f + 0.240f² + 0.055f³ + 0.010f⁴
+    float pow2_frac = 1.0f + 0.6931472f * f + 0.2402265f * f * f + ...;
+    // Set exponent bits directly
+    uint32_t bits = static_cast<uint32_t>(n + 127) << 23;
+    float pow2_int;
+    std::memcpy(&pow2_int, &bits, sizeof(float));
+    return pow2_int * pow2_frac;
+}
+```
+
+### Implementation Changes
+
+1. **Fixed `gelu_reference_f64()`**: Use erfc for negative x
+2. **Fixed `gelu_derivative_reference_f64()`**: Same erfc fix
+3. **Renamed `gelu_inverse()` → `gelu_inverse_reference()`**: Clarify it uses std::erf
+4. **Added `gelu_asymptotic()`**: Pure arithmetic asymptotic expansion
+5. **Updated `gelu_negative_tail()`**: Use asymptotic for x < LUT_END
+6. **Created `gelu_b3_pure()`**: B3 with asymptotic tail (no LUT dependency)
+7. **Removed redundant NEG saturation checks**: All methods now use gelu_negative_tail()
+
+### Results
+
+| Method | Before | After | Improvement |
+|--------|--------|-------|-------------|
+| **B3 Pure** | N/A | **33** | NEW BEST |
+| R5 LUT | 87 | 87 | (unchanged) |
+| C1 Spline | 87 | 87 | (unchanged) |
+| B3 Erf | 87 | 87 | (unchanged) |
+
+**B3 Pure achieves Max ULP = 33** — better than all LUT-based methods (87)!
+
+The remaining 33 ULP error occurs at x ≈ -13.25 where the asymptotic series truncation introduces small error.
+
+### Per-Region Analysis (B3 Pure)
+
+| Region | Mean ULP | Max ULP |
+|--------|----------|---------|
+| near_zero | 0.00 | 0 |
+| core_pos | 0.04 | 1 |
+| core_neg | 2.03 | 23 |
+| tail_pos | 0.00 | 0 |
+| tail_neg | 0.01 | 33 |
+
+### Key Insights
+
+1. **Reference function was wrong**: The naive `1 + erf(z)` formula has catastrophic cancellation for large negative z. This caused all previous ULP measurements to be incorrect!
+
+2. **Asymptotic beats LUT**: Pure arithmetic asymptotic expansion (Max ULP 33) outperforms LUT interpolation (Max ULP 87) for deep tail.
+
+3. **core_neg is the new bottleneck**: Most methods now fail at x ≈ -3.5 (the TAIL_START boundary), not the deep tail.
+
+4. **No LUT required for best accuracy**: B3 Pure uses only arithmetic operations and achieves the lowest Max ULP.
+
+### Mathematical Background
+
+The asymptotic expansion of Φ(x) for large negative x:
+```
+Φ(x) ≈ φ(x)/|x| · (1 - 1/x² + 3/x⁴ - 15/x⁶ + 105/x⁸ - ...)
+```
+where φ(x) = exp(-x²/2)/√(2π) is the Gaussian PDF.
+
+For GELU(x) = x·Φ(x), this gives:
+```
+GELU(x) ≈ -φ(x) · (1 - 1/x² + 3/x⁴ - 15/x⁶)
+```
+(The x and 1/|x| terms cancel since x < 0.)
+
+Truncating at the x⁻⁶ term gives sufficient accuracy for bf16.
+
+### Files Modified
+- `gelu_implementations.cpp`: erfc fix, asymptotic expansion, B3 Pure
+- `debug_tools.cpp`: Created for exp/asymptotic debugging
+- `README.md`: Updated results, new best method, expanded documentation
+- `CLAUDE.md`: Streamlined, references other files
+- `HISTORY.md`: This session documentation
+
+### Project Status
+
+**B3 Pure is now the best method with Max ULP = 33.**
+
+The project achieves:
+- 100% taxonomy coverage (40/40 methods)
+- 8 methods with Max ULP ≤ 88
+- Best method (B3 Pure) uses pure arithmetic, no LUT
+- Correct reference function using erfc for numerical stability
