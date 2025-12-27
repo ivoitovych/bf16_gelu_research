@@ -70,49 +70,49 @@ g++ -std=c++23 -O2 -o ulp_calculator ulp_calculator.cpp
 | **G: Methodology** | 8 | 8 ✓ | G1-G8 all complete |
 | **H: Advanced** | 3 | 3 ✓ | H1 (inverse), H2 (GELU-Softmax), H3 (SoftEx) |
 
-### Best Performers (Max ULP ≤ 200)
+### Best Performers (Max ULP ≤ 100)
 
 | ID | Method | Mean ULP | Max ULP |
 |----|--------|----------|---------|
-| **R5** | LUT + extended tail | **0.10** | **145** |
-| **C1** | Cubic spline (9-seg) | **0.13** | **145** |
-| **B3** | Erf polynomial (A-S) | **0.13** | **145** |
-| **D2** | LUT tails + B3 erf | 0.13 | 145 |
-| **F2** | Quadrature + B3 erf | 0.13 | 145 |
-| **R4** | Tanh-form + Padé | 0.14 | 166 |
-| **F3** | CF + B3 erf fallback | 0.15 | 145 |
-| **D4** | Non-uniform LUT | 0.63 | 145 |
+| **R5** | LUT + two-tier tail | **0.07** | **87** |
+| **C1** | Cubic spline (9-seg) | **0.10** | **87** |
+| **B3** | Erf polynomial (A-S) | **0.11** | **87** |
+| **D2** | LUT tails + B3 erf | 0.11 | 87 |
+| **F2** | Quadrature + B3 erf | 0.11 | 87 |
+| **R4** | Tanh-form + Padé | 0.11 | 166 |
+| **F3** | CF + B3 erf fallback | 0.12 | 87 |
+| **D4** | Non-uniform LUT | 0.60 | 88 |
 
 ## Current Results
 
 | Method | Max ULP | Mean ULP | P99 | Notes |
 |--------|---------|----------|-----|-------|
-| **R5 LUT** | **145** | **0.10** | 0 | **Best overall** - 512 entries + extended tail |
-| **C1 Cubic Spline** | **145** | **0.13** | 0 | 9-seg Hermite + Taylor near-zero |
-| **B3 Erf Polynomial** | **145** | **0.13** | 0 | Piecewise erf (Taylor + rational) |
-| **D2 LUT+Erf** | **145** | **0.13** | 0 | LUT tails + B3-style erf core |
-| **F2 Quadrature** | **145** | **0.13** | 0 | Gauss-Legendre + B3 erf fallback |
-| **R4 Tanh** | 166 | 0.14 | 0 | Tanh-form + [3,3] Padé |
-| **F3 CF Erf** | **145** | **0.15** | 0 | Continued fraction + B3 erf fallback |
-| **D4 Non-uniform** | **145** | **0.63** | 28 | Non-uniform LUT + Taylor near-zero |
-| B4 Rational Erf | 535 | 0.59 | 2 | Range-reduced rational |
-| B1v2 Sigmoid | 625 | 1.50 | 34 | Quadratic sigmoid |
-| D3 LUT+Corr | 830 | 1.84 | 41 | Coarse LUT + correction |
-| R3 PWL | 832 | 36.85 | 97 | High near-zero error |
-| C2 Piecewise | 881 | 1.18 | 1 | Piecewise rational |
-| B1 Sigmoid | 1068 | 1.67 | 18 | Simple sigmoid |
-| R2 Rational | 1139 | 1.22 | 2 | Rational Padé |
-| **E3 Range-Scaled** | 1130 | 1.75 | 10 | BF16 exponent-aligned scaling |
-| **H2 GELU-Softmax** | 1130 | 1.33 | 9 | PWL exp shared with softmax |
-| A4 Cont.Frac | 1206 | 1.73 | 15 | Continued fraction |
-| A3 Chebyshev | 1207 | 2.57 | 45 | Chebyshev (Clenshaw) |
-| H3 SoftEx | 1247 | 1.28 | 1 | Arithmetic exp via Padé |
-| R1 Poly-9 | 1312 | 1.43 | 1 | Polynomial core |
-| A1 Direct Poly | 1404-1547 | 3.58-3.61 | 33 | Direct polynomial (7th/9th degree) |
+| **R5 LUT** | **87** | **0.07** | 0 | **Best overall** - 512 entries + two-tier tail |
+| **C1 Cubic Spline** | **87** | **0.10** | 0 | 9-seg Hermite + Taylor near-zero |
+| **B3 Erf Polynomial** | **87** | **0.11** | 0 | Piecewise erf (Taylor + rational) |
+| **D2 LUT+Erf** | **87** | **0.11** | 0 | LUT tails + B3-style erf core |
+| **F2 Quadrature** | **87** | **0.11** | 0 | Gauss-Legendre + B3 erf fallback |
+| **R4 Tanh** | 166 | 0.11 | 0 | Tanh-form + [3,3] Padé |
+| **F3 CF Erf** | **87** | **0.12** | 0 | Continued fraction + B3 erf fallback |
+| **D4 Non-uniform** | **88** | **0.60** | 28 | Non-uniform LUT + Taylor near-zero |
+| B4 Rational Erf | 535 | 0.56 | 2 | Range-reduced rational |
+| B1v2 Sigmoid | 625 | 1.47 | 34 | Quadratic sigmoid |
+| D3 LUT+Corr | 830 | 1.82 | 41 | Coarse LUT + correction |
+| R3 PWL | 832 | 36.82 | 97 | High near-zero error |
+| C2 Piecewise | 881 | 1.15 | 1 | Piecewise rational |
+| B1 Sigmoid | 1068 | 1.64 | 18 | Simple sigmoid |
+| R2 Rational | 1139 | 1.19 | 2 | Rational Padé |
+| **E3 Range-Scaled** | 1130 | 1.72 | 10 | BF16 exponent-aligned scaling |
+| **H2 GELU-Softmax** | 1130 | 1.30 | 9 | PWL exp shared with softmax |
+| A4 Cont.Frac | 1206 | 1.71 | 15 | Continued fraction |
+| A3 Chebyshev | 1207 | 2.54 | 45 | Chebyshev (Clenshaw) |
+| H3 SoftEx | 1247 | 1.26 | 1 | Arithmetic exp via Padé |
+| R1 Poly-9 | 1312 | 1.40 | 1 | Polynomial core |
+| A1 Direct Poly | 1404-1547 | 3.55-3.58 | 30 | Direct polynomial (7th/9th degree) |
 
 **Saturation thresholds**: x ≥ 3 → x, x ≤ -9 → 0
 
-**Tail handling**: Extended LUT from x=-3.5 to x=-8.3125 with 0.25-step + finer resolution near bf16 underflow boundary. For x < -8.3125, bf16 underflows to -0.
+**Tail handling**: Two-tier LUT from x=-3.5 to x=-8.3125: main region 0.25-step, fine region 0.0625-step near underflow. For x < -8.3125, bf16 underflows to -0.
 
 ## Quick Reference
 
@@ -129,8 +129,8 @@ Tail handling (x ∈ [-8.3125, -3.5]):
   - For x < -8.3125, bf16 underflows to -0
 
 Key approximations:
-  C1 Spline:    9-segment Hermite + Taylor near-zero [BEST: 0.13 mean ULP, 145 max ULP]
-  B3 Erf:       Piecewise erf (Taylor |z|<1, A-S rational |z|≥1) [0.13 mean ULP, 145 max ULP]
+  C1 Spline:    9-segment Hermite + Taylor near-zero [BEST: 0.10 mean ULP, 87 max ULP]
+  B3 Erf:       Piecewise erf (Taylor |z|<1, A-S rational |z|≥1) [0.11 mean ULP, 87 max ULP]
   R4 Tanh:      GELU(x) ≈ 0.5x(1 + tanh(0.7979(x + 0.0447x³))) [0.14 mean ULP, 166 max ULP]
   tanh approx:  tanh(z) ≈ z·(1 + 0.128z² + ...)/(1 + 0.462z² + ...) [3,3] Padé
 ```
@@ -178,7 +178,7 @@ Regions: near_zero (|x|<0.5), core_pos/neg (0.5≤|x|<3), tail_pos/neg (|x|≥3)
 
 **All phases complete. 100% taxonomy coverage (40/40 methods).**
 
-8 methods achieve Max ULP = 145 (bf16 underflow limit):
+8 methods achieve Max ULP ≤ 88 (improved via two-tier tail LUT):
 - R5 LUT (0.10 mean), C1 Spline (0.13), B3 Erf (0.13), D2 LUT+Erf (0.13)
 - F2 Quadrature (0.13), R4 Tanh (0.14, max 166), F3 CF Erf (0.15), D4 Non-uniform (0.63)
 
