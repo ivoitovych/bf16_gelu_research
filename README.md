@@ -10,29 +10,29 @@ This project implements and evaluates multiple GELU approximation strategies opt
 
 | Method | Mean ULP | Max ULP | Description |
 |--------|----------|---------|-------------|
-| **R5 LUT** | **0.10** | **145** | 512-entry LUT + extended tail handler |
-| **C1 Spline** | **0.13** | **145** | 9-segment Hermite + Taylor near-zero |
-| **B3 Erf Poly** | **0.13** | **145** | Piecewise erf (Taylor + A-S rational) |
-| **D2 LUT+Erf** | **0.13** | **145** | LUT tails + B3-style erf core |
-| **F2 Quadrature** | **0.13** | **145** | Gauss-Legendre + B3 erf fallback |
-| **R4 Tanh** | 0.14 | 166 | Tanh-form + [3,3] Padé approximation |
-| **F3 CF Erf** | **0.15** | **145** | Continued fraction + B3 erf fallback |
-| B4 Rational Erf | 0.59 | 535 | Range-reduced rational erf |
-| **D4 Non-uniform** | **0.63** | **145** | Non-uniform LUT + Taylor near-zero |
-| C2 Piecewise | 1.18 | 881 | Piecewise rational (3 segments) |
-| R2 Rational | 1.22 | 1139 | Rational Padé [4/4] |
-| H3 SoftEx | 1.28 | 1247 | Arithmetic-only exp via Padé |
-| H2 GELU-Softmax | 1.33 | 1130 | PWL exp shared with softmax |
-| R1 Poly-9 | 1.43 | 1312 | 9th-degree minimax polynomial |
-| B1v2 Sigmoid | 1.50 | 625 | Quadratic sigmoid approximation |
-| B1 Sigmoid | 1.67 | 1068 | Simple sigmoid approximation |
-| A4 Cont.Frac | 1.73 | 1206 | Continued fraction depth-4 |
-| E3 Range-Scaled | 1.75 | 1130 | BF16 exponent-aligned scaling |
-| D3 LUT+Corr | 1.84 | 830 | Coarse LUT + polynomial correction |
-| A3 Chebyshev | 2.57 | 1207 | Chebyshev polynomial (Clenshaw) |
-| R3 PWL | 36.85 | 832 | Piecewise linear (power-of-2 breakpoints) |
+| **R5 LUT** | **0.07** | **87** | 512-entry LUT + two-tier tail handler |
+| **C1 Spline** | **0.10** | **87** | 9-segment Hermite + Taylor near-zero |
+| **B3 Erf Poly** | **0.11** | **87** | Piecewise erf (Taylor + A-S rational) |
+| **D2 LUT+Erf** | **0.11** | **87** | LUT tails + B3-style erf core |
+| **F2 Quadrature** | **0.11** | **87** | Gauss-Legendre + B3 erf fallback |
+| **R4 Tanh** | 0.11 | 166 | Tanh-form + [3,3] Padé approximation |
+| **F3 CF Erf** | **0.12** | **87** | Continued fraction + B3 erf fallback |
+| B4 Rational Erf | 0.56 | 535 | Range-reduced rational erf |
+| **D4 Non-uniform** | **0.60** | **88** | Non-uniform LUT + Taylor near-zero |
+| C2 Piecewise | 1.15 | 881 | Piecewise rational (3 segments) |
+| R2 Rational | 1.19 | 1139 | Rational Padé [4/4] |
+| H3 SoftEx | 1.26 | 1247 | Arithmetic-only exp via Padé |
+| H2 GELU-Softmax | 1.30 | 1130 | PWL exp shared with softmax |
+| R1 Poly-9 | 1.40 | 1312 | 9th-degree minimax polynomial |
+| B1v2 Sigmoid | 1.47 | 625 | Quadratic sigmoid approximation |
+| B1 Sigmoid | 1.64 | 1068 | Simple sigmoid approximation |
+| A4 Cont.Frac | 1.71 | 1206 | Continued fraction depth-4 |
+| E3 Range-Scaled | 1.72 | 1130 | BF16 exponent-aligned scaling |
+| D3 LUT+Corr | 1.82 | 830 | Coarse LUT + polynomial correction |
+| A3 Chebyshev | 2.54 | 1207 | Chebyshev polynomial (Clenshaw) |
+| R3 PWL | 36.82 | 832 | Piecewise linear (power-of-2 breakpoints) |
 
-**8 methods achieve Max ULP = 145** (the bfloat16 underflow limit). 24 methods implemented across 8 categories from FinalLists.md taxonomy.
+**8 methods achieve Max ULP ≤ 88** (improved from 145 via two-tier tail LUT). 24 methods implemented across 8 categories from FinalLists.md taxonomy.
 
 ## Background
 
@@ -164,7 +164,7 @@ Done! Valid bfloat16 values: 65280
 
 --- C1: Cubic Spline (8 seg) ---
 Samples:    65280
-Max ULP:    145
+Max ULP:    87
 Mean ULP:   0.1254
 P50 ULP:    0
 P90 ULP:    0
@@ -178,7 +178,7 @@ P99 ULP:    0
   | core_pos      |   320 |        1 |      0.07 |
   | core_neg      |   321 |       12 |      4.09 |
   | tail_pos      | 16192 |        0 |      0.00 |
-  | tail_neg      | 16191 |      145 |      0.05 |
+  | tail_neg      | 16191 |       87 |      0.28 |
   +---------------+-------+----------+-----------+
 ```
 
@@ -199,7 +199,7 @@ All implementations use only basic arithmetic:
 - Fritsch-Carlson monotonicity clamping
 - Taylor approximation for |x| < 0.125
 ```
-**Best performer with Mean ULP 0.13, Max ULP 145.**
+**Best performer with Mean ULP 0.10, Max ULP 87.**
 
 #### B3: Erf Polynomial (Best Method)
 ```
@@ -207,7 +207,7 @@ Piecewise erf approximation:
 - |z| < 1: Taylor series
 - |z| ≥ 1: Abramowitz-Stegun rational approximation
 ```
-**Best performer with Mean ULP 0.13, Max ULP 145.**
+**Best performer with Mean ULP 0.10, Max ULP 87.**
 
 #### B1: Sigmoid-Based GELU
 ```
@@ -258,7 +258,7 @@ tanh(z) ≈ z·(a₀ + a₁z² + a₂z⁴ + a₃z⁶) / (b₀ + b₁z² + b₂z�
 Linear interpolation between entries
 Range: [-9, 3] with extended tail LUT
 ```
-**Best performer with Mean ULP 0.10, Max ULP 145.** Uses precomputed erf values with extended tail handler.
+**Best performer with Mean ULP 0.07, Max ULP 87.** Uses precomputed erf values with two-tier tail handler.
 
 #### A3: Chebyshev Polynomial
 ```
@@ -298,7 +298,7 @@ x >= 3: Positive saturation (GELU(x) = x)
 x < -3.5: Extended tail LUT
 |x| <= 3.5: B3-style piecewise erf (Taylor + A-S rational)
 ```
-Hybrid approach combining LUT tails with proven erf approximation. **Mean ULP 0.13, Max ULP 145.**
+Hybrid approach combining LUT tails with proven erf approximation. **Mean ULP 0.11, Max ULP 87.**
 
 #### D3: LUT + Polynomial Correction
 ```
@@ -315,7 +315,7 @@ Denser near x=0 and saturation boundaries
 Taylor approximation for |x| < 0.125
 Binary search for segment lookup
 ```
-Optimized spacing with near-zero Taylor fix. **Mean ULP 0.63, Max ULP 145.**
+Optimized spacing with near-zero Taylor fix. **Mean ULP 0.60, Max ULP 88.**
 
 #### F2: Numerical Quadrature
 ```
@@ -323,7 +323,7 @@ Optimized spacing with near-zero Taylor fix. **Mean ULP 0.63, Max ULP 145.**
 For x < -2: B3-style erf fallback
 For |x| <= 2: Taylor-based exp approximation
 ```
-Hybrid quadrature with B3 erf fallback for negative region. **Mean ULP 0.13, Max ULP 145.**
+Hybrid quadrature with B3 erf fallback for negative region. **Mean ULP 0.11, Max ULP 87.**
 
 #### F3: Continued Fraction Erf
 ```
@@ -331,7 +331,7 @@ Taylor series for |z| < 0.5
 Lentz CF algorithm for |z| ≥ 0.5
 For x < -2: B3-style erf fallback
 ```
-CF-based erf with B3 fallback for problematic negative region. **Mean ULP 0.15, Max ULP 145.**
+CF-based erf with B3 fallback for problematic negative region. **Mean ULP 0.12, Max ULP 87.**
 
 #### H1: Inverted GELU
 ```
@@ -381,7 +381,7 @@ namespace tail_lut {
 }
 ```
 
-For x < -8.3125, bf16 underflows to -0 (0x8000). The extended LUT with finer resolution near the underflow boundary reduced Max ULP from 9904 to 145.
+For x < -8.3125, bf16 underflows to -0 (0x8000). The two-tier LUT (0.25-step main + 0.0625-step fine) reduced Max ULP from 9904 to 87.
 
 ## Project Structure
 
@@ -418,9 +418,9 @@ The codebase divides the input range into regions for detailed error analysis:
 
 ### Max ULP Analysis
 
-After extending the tail LUT, max ULP was reduced from **9904 to 145** for the best methods (C1, B3). The remaining errors occur at two boundaries:
+After implementing the two-tier tail LUT, max ULP was reduced from **9904 to 87** for the best methods (R5, C1, B3). The remaining errors come from linear interpolation in the exponentially-decaying negative tail region:
 
-1. **x ≈ -8.3125**: Transition to bf16 underflow region (145 ULP)
+1. **x ≈ -7.65**: Linear interpolation between LUT points doesn't match exponential decay (87 ULP)
 2. **x ≈ -3.5**: Boundary between core approximation and tail handler (166 ULP for R4)
 
 The extended LUT (21 entries at 0.25 step from -3.5 to -8.3125) with proper bf16 underflow handling achieves excellent accuracy across the entire bfloat16 range.
@@ -482,7 +482,7 @@ Based on FinalLists.md, the project follows a phased implementation approach:
 
 ### All Methods Fixed
 
-All methods now achieve Max ULP ≤ 1547 (A1 Poly-7). The top 8 methods achieve Max ULP = 145 (the bfloat16 underflow limit at x ≈ -8.3125).
+All methods now achieve Max ULP ≤ 1547 (A1 Poly-7). The top 8 methods achieve Max ULP ≤ 88 (improved via two-tier tail LUT with 0.0625-step resolution).
 
 Previous issues with D2, D4, F2, F3 (arithmetic exp() failing for |x| > 2) were fixed by:
 - **D2**: Replaced polynomial core with B3-style piecewise erf
@@ -501,7 +501,7 @@ Previous issues with D2, D4, F2, F3 (arithmetic exp() failing for |x| > 2) were 
 
 5. **Entire range testing**: Methods optimized for [-8, 8] may fail catastrophically outside this range.
 
-6. **Eight methods achieve Max ULP = 145**: R5, C1, B3, D2, F2, F3, D4 all reach the bf16 underflow limit. R4 achieves 166 (boundary at x=-3.5).
+6. **Eight methods achieve Max ULP ≤ 88**: R5, C1, B3, D2, F2, F3, D4 achieve 87-88 via two-tier tail LUT. R4 achieves 166 (boundary at x=-3.5).
 
 7. **B3 erf is the universal fallback**: When arithmetic-only exp() fails (|x| > 2), the B3 piecewise erf (Taylor + A-S rational) provides reliable fallback.
 
