@@ -1310,13 +1310,14 @@ std::bfloat16_t gelu_c2_piecewise_rational(std::bfloat16_t x_bf16) {
 // ============================================================================
 
 /**
- * @brief D2: LUT for tails + polynomial for center
+ * @brief D2: LUT for tails + B3-style erf for center
  *
  * Hybrid approach:
- * - |x| > 3: Use LUT (critical for BF16 dynamic range)
- * - |x| <= 3: Use high-accuracy polynomial
+ * - x >= 3: GELU(x) ≈ x (positive saturation)
+ * - x < -3.5: Extended tail LUT
+ * - |x| <= 3.5: B3-style piecewise erf (Taylor + rational)
  *
- * This minimizes relative errors where BF16 struggles most.
+ * Fixed: Now uses proven B3 erf approximation instead of failing polynomial.
  */
 std::bfloat16_t gelu_d2_lut_poly_hybrid(std::bfloat16_t x_bf16) {
     float x = static_cast<float>(x_bf16);
@@ -1331,36 +1332,41 @@ std::bfloat16_t gelu_d2_lut_poly_hybrid(std::bfloat16_t x_bf16) {
         return static_cast<std::bfloat16_t>(gelu_negative_tail(x));
     }
 
-    // Transition zone [-3.5, -3]: blend
-    if (x < -3.0f) {
-        float t = (x - (-3.5f)) / 0.5f;  // 0 at -3.5, 1 at -3
-        float tail_val = gelu_negative_tail(x);
+    // Core region: use B3-style piecewise erf approximation
+    constexpr float inv_sqrt_2 = 0.7071067811865475f;
+    float z = x * inv_sqrt_2;
+    float abs_z = std::abs(z);
+    float z2 = z * z;
 
-        // Polynomial value at boundary
-        float x2 = x * x;
-        float poly_phi = 0.5f + x * (0.3989423f - 0.044715f * x2) / (1.0f + 0.2f * x2);
-        float poly_val = x * poly_phi;
+    float erf_z;
+    if (abs_z < 1.0f) {
+        // Taylor series for small z
+        constexpr float two_over_sqrt_pi = 1.1283791670955126f;
+        float z4 = z2 * z2;
+        float z6 = z4 * z2;
+        float series = 1.0f - 0.333333333f * z2 + 0.1f * z4 - 0.023809524f * z6;
+        erf_z = two_over_sqrt_pi * z * series;
+    } else {
+        // Rational approximation for |z| >= 1 (Abramowitz-Stegun style)
+        constexpr float a1 = 0.278393f;
+        constexpr float a2 = 0.230389f;
+        constexpr float a3 = 0.000972f;
+        constexpr float a4 = 0.078108f;
 
-        float result = t * poly_val + (1.0f - t) * tail_val;
-        return static_cast<std::bfloat16_t>(result);
+        float t = abs_z;
+        float t2 = t * t;
+        float t3 = t2 * t;
+        float t4 = t2 * t2;
+        float p = a1 * t + a2 * t2 + a3 * t3 + a4 * t4;
+        float denom = 1.0f + p;
+        float abs_erf = 1.0f - 1.0f / (denom * denom * denom * denom);
+        erf_z = (z >= 0) ? abs_erf : -abs_erf;
     }
 
-    // Core region [-3, 3]: use degree-7 polynomial for Φ(x)
-    float x2 = x * x;
-    float x4 = x2 * x2;
-
-    // Minimax polynomial coefficients for Φ(x) on [-3, 3]
-    constexpr float c1 = 0.3989422804f;    // 1/√(2π)
-    constexpr float c3 = -0.0446598f;
-    constexpr float c5 = 0.00278946f;
-    constexpr float c7 = -0.0000775f;
-
-    float phi = 0.5f + x * (c1 + x2 * (c3 + x2 * (c5 + x2 * c7)));
-
-    // Clamp phi to [0, 1]
-    phi = std::max(0.0f, std::min(1.0f, phi));
-
+    erf_z = std::max(-1.0f, std::min(1.0f, erf_z));
+    float phi = 0.5f * (1.0f + erf_z);
     float result = x * phi;
+
     return static_cast<std::bfloat16_t>(result);
 }
 
@@ -1432,8 +1438,8 @@ std::bfloat16_t gelu_d3_lut_correction(std::bfloat16_t x_bf16) {
 /**
  * @brief D4: Non-uniform LUT spacing optimized for max-ULP
  *
- * Uses denser sampling near x=0 and at saturation boundaries
- * where ULP sensitivity is highest.
+ * Uses denser sampling near x=0 and at saturation boundaries.
+ * Fixed: Added Taylor approximation for near-zero region.
  */
 namespace d4_lut {
     // Non-uniform breakpoints: denser near 0 and boundaries
@@ -1460,6 +1466,18 @@ std::bfloat16_t gelu_d4_nonuniform_lut(std::bfloat16_t x_bf16) {
     if (x >= thresholds::POS) return x_bf16;
     if (x < tail_lut::LUT_START) {
         return static_cast<std::bfloat16_t>(gelu_negative_tail(x));
+    }
+
+    // Near-zero: use Taylor approximation for |x| < 0.125
+    // GELU(x) ≈ 0.5x + (1/√(2π))x² - (1/(6√(2π)))x⁴
+    // For very small |x|, GELU(x) ≈ 0.5x is sufficient
+    float abs_x = std::abs(x);
+    if (abs_x < 0.125f) {
+        // GELU(x) ≈ x * Φ(x) where Φ(x) ≈ 0.5 + 0.3989x for small x
+        constexpr float c1 = 0.3989422804f;  // 1/√(2π)
+        float phi = 0.5f + c1 * x;
+        float result = x * phi;
+        return static_cast<std::bfloat16_t>(result);
     }
 
     // Find segment via binary search
@@ -1547,8 +1565,25 @@ std::bfloat16_t gelu_f2_quadrature(std::bfloat16_t x_bf16) {
     double x = static_cast<double>(static_cast<float>(x_bf16));
 
     if (x >= thresholds::POS) return x_bf16;
-    if (x < tail_lut::LUT_START) {
-        return static_cast<std::bfloat16_t>(gelu_negative_tail(static_cast<float>(x)));
+
+    // Extended tail handling: exp() approximation fails for |x| > 2
+    // Use tail LUT for x < -2.0 instead of just x < -3.5
+    if (x < -2.0) {
+        if (x < tail_lut::LUT_START) {
+            return static_cast<std::bfloat16_t>(gelu_negative_tail(static_cast<float>(x)));
+        }
+        // For x in [-3.5, -2.0], use B3-style erf instead of quadrature
+        constexpr float inv_sqrt_2 = 0.7071067811865475f;
+        float xf = static_cast<float>(x);
+        float z = xf * inv_sqrt_2;
+        float abs_z = std::abs(z);
+        constexpr float a1 = 0.278393f, a2 = 0.230389f, a3 = 0.000972f, a4 = 0.078108f;
+        float t = abs_z;
+        float p = a1*t + a2*t*t + a3*t*t*t + a4*t*t*t*t;
+        float abs_erf = 1.0f - 1.0f / ((1.0f + p) * (1.0f + p) * (1.0f + p) * (1.0f + p));
+        float erf_z = (z >= 0) ? abs_erf : -abs_erf;
+        float phi = 0.5f * (1.0f + erf_z);
+        return static_cast<std::bfloat16_t>(xf * phi);
     }
 
     double phi = phi_quadrature_f64(x);
@@ -1610,8 +1645,25 @@ std::bfloat16_t gelu_f3_cf_erf(std::bfloat16_t x_bf16) {
     double x = static_cast<double>(static_cast<float>(x_bf16));
 
     if (x >= thresholds::POS) return x_bf16;
-    if (x < tail_lut::LUT_START) {
-        return static_cast<std::bfloat16_t>(gelu_negative_tail(static_cast<float>(x)));
+
+    // Extended tail handling: CF exp() approximation fails for |x| > 2
+    // Use tail LUT or B3-style erf for x < -2.0
+    if (x < -2.0) {
+        if (x < tail_lut::LUT_START) {
+            return static_cast<std::bfloat16_t>(gelu_negative_tail(static_cast<float>(x)));
+        }
+        // For x in [-3.5, -2.0], use B3-style erf instead of CF
+        constexpr float inv_sqrt_2 = 0.7071067811865475f;
+        float xf = static_cast<float>(x);
+        float z = xf * inv_sqrt_2;
+        float abs_z = std::abs(z);
+        constexpr float a1 = 0.278393f, a2 = 0.230389f, a3 = 0.000972f, a4 = 0.078108f;
+        float t = abs_z;
+        float p = a1*t + a2*t*t + a3*t*t*t + a4*t*t*t*t;
+        float abs_erf = 1.0f - 1.0f / ((1.0f + p) * (1.0f + p) * (1.0f + p) * (1.0f + p));
+        float erf_z = (z >= 0) ? abs_erf : -abs_erf;
+        float phi = 0.5f * (1.0f + erf_z);
+        return static_cast<std::bfloat16_t>(xf * phi);
     }
 
     double z = x * constants::INV_SQRT_2;
