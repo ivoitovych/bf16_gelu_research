@@ -100,7 +100,7 @@ g++ -std=c++23 -o test_bfloat16 test_bfloat16.cpp && ./test_bfloat16
 ### Running Analysis
 
 ```bash
-# Full ULP analysis over entire bfloat16 range (22 methods)
+# Full ULP analysis over entire bfloat16 range (24 methods)
 ./gelu_analysis --analyze
 
 # Diagnostic mode with specific test points
