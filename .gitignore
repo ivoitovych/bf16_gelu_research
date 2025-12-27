@@ -1,0 +1,17 @@
+# Compiled binaries
+gelu_analysis
+ulp_calculator
+test_bfloat16
+*.o
+*.out
+
+# Editor/IDE files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
