@@ -18,7 +18,7 @@ g++ -std=c++23 -O3 -march=native -o gelu_analysis gelu_implementations.cpp -lm
 g++ -std=c++23 -O2 -o ulp_calculator ulp_calculator.cpp
 
 # Run analysis
-./gelu_analysis --analyze      # Full ULP analysis
+./gelu_analysis --analyze      # Full ULP analysis (22 methods)
 ./gelu_analysis --diagnose     # Diagnostic mode
 ./gelu_analysis --reference    # Show reference values
 ./gelu_analysis --saturation   # Analyze saturation boundaries
@@ -26,6 +26,10 @@ g++ -std=c++23 -O2 -o ulp_calculator ulp_calculator.cpp
 ./gelu_analysis --regression   # G7/G8 regression suite
 ./gelu_analysis --derivative   # G4 backward pass test
 ./gelu_analysis --verify-knots # Debug C1 spline knots
+./gelu_analysis --quantization # E2: Coefficient quantization
+./gelu_analysis --fma          # E6/G2: FMA vs non-FMA comparison
+./gelu_analysis --sensitivity  # E7: Coefficient sensitivity
+./gelu_analysis --cost-model   # G5: Operation cost model
 ./gelu_analysis --all          # All modes
 ```
 
@@ -49,60 +53,56 @@ g++ -std=c++23 -O2 -o ulp_calculator ulp_calculator.cpp
 
 ## Implementation Status vs FinalLists.md
 
-### Implemented ✓
+### All Phases Complete ✓
 
-| Phase | ID | Method | Status |
-|-------|-----|--------|--------|
-| 0 | F1 | High-precision GELU (float64) | ✓ Complete |
-| 0 | G1 | ULP measurement framework | ✓ Complete |
-| 0 | G3 | Multi-region error analysis | ✓ Complete |
-| 1 | A1 | Direct polynomial (7th/9th degree) | ✓ Complete |
-| 1 | B1 | Sigmoid-based: x·σ(1.702x) | ✓ Complete |
-| 1 | B1v2 | Quadratic sigmoid variant | ✓ Complete |
-| 1 | B3 | Erf polynomial (piecewise A-S) | ✓ **Best performer** (0.13 mean, 145 max ULP) |
-| 2 | C1 | Cubic spline (9 segments + Fritsch-Carlson) | ✓ **Best performer** (0.13 mean, 145 max ULP) |
-| 1 | R1/C4 | Saturation + poly-9 core | ✓ Complete |
-| 1 | R2/A2 | Rational Padé | ✓ Complete |
-| 1 | R3/C3 | Piecewise linear (ISPA) | ✓ Complete |
-| 1 | R4/B2 | Tanh-form + [3,3] Padé tanh | ✓ Excellent (0.14 mean, 166 max ULP) |
-| 1 | R5/D1 | LUT (512 entries) + interpolation | ✓ Complete |
-| 4 | G4 | Backward pass (GELU' derivative) | ✓ Complete |
-| 4 | G7/G8 | Regression suite (adversarial points) | ✓ Complete |
+| Category | Methods Implemented | Status |
+|----------|---------------------|--------|
+| **A: Direct** | A1 (poly-7, poly-9), A3 (Chebyshev), A4 (cont.frac) | ✓ Complete |
+| **B: Sub-function** | B1, B1v2 (sigmoid), B3 (erf poly), B4 (rational erf) | ✓ Complete |
+| **C: Piecewise** | C1 (spline), C2 (piecewise rational) | ✓ Complete |
+| **D: Hybrid/LUT** | R5/D1 (LUT), D2 (LUT+poly), D3 (LUT+corr), D4 (nonuniform) | ✓ Complete |
+| **E: BF16 Knobs** | E2 (quantization), E6 (FMA), E7 (sensitivity) | ✓ Complete |
+| **F: Reference** | F1 (float64), F2 (quadrature), F3 (CF erf) | ✓ Complete |
+| **G: Methodology** | G1-G5, G7/G8 | ✓ Complete |
+| **H: Advanced** | H1 (inverse), H3 (SoftEx) | ✓ Complete |
 
-### Not Yet Implemented
+### Best Performers (Max ULP ≤ 200)
 
-**Phase 2 - Better ULP Control:**
-| ID | Method | Priority |
-|----|--------|----------|
-| C2 | Piecewise rational (3-5 segments) | ★★★★☆ |
+| ID | Method | Mean ULP | Max ULP |
+|----|--------|----------|---------|
+| **R5** | LUT + extended tail | **0.10** | **145** |
+| **C1** | Cubic spline (9-seg) | **0.13** | **145** |
+| **B3** | Erf polynomial (A-S) | **0.13** | **145** |
+| **R4** | Tanh-form + Padé | 0.14 | 166 |
 
-**Phase 3 - BF16 Optimizations (E1-E7):**
-| ID | Optimization | Priority |
-|----|--------------|----------|
-| E1 | Monotonicity/bounds-constrained fitting | ★★★★☆ |
-| E2 | Coefficient quantization to BF16 + refit | ★★★★★ |
-| E6 | FMA-aware coefficient sets (Horner vs Estrin) | ★★★★☆ |
+### Known Issues
 
-**Phase 4 - Validation & Training:**
-| ID | Method | Priority |
-|----|--------|----------|
-| G2 | FMA vs non-FMA comparison | ★★★★☆ |
-| G5 | Cost model (mul/add/div count) | ★★★☆☆ |
+| Method | Max ULP | Issue |
+|--------|---------|-------|
+| D2, D4, F2, F3 | >10000 | Arithmetic-only exp() fails for |x| > 2 in core_neg |
+
+**Fix needed**: Extend tail LUT into [-3, -2] region for these methods.
 
 ## Current Results
 
 | Method | Max ULP | Mean ULP | P99 | Notes |
 |--------|---------|----------|-----|-------|
-| **C1 Cubic Spline** | **145** | **0.13** | 0 | **Best overall** - 9-seg Hermite + Taylor near-zero |
+| **R5 LUT** | **145** | **0.10** | 0 | **Best overall** - 512 entries + extended tail |
+| **C1 Cubic Spline** | **145** | **0.13** | 0 | 9-seg Hermite + Taylor near-zero |
 | **B3 Erf Polynomial** | **145** | **0.13** | 0 | Piecewise erf (Taylor + rational) |
 | **R4 Tanh** | 166 | 0.14 | 0 | Tanh-form + [3,3] Padé |
+| B4 Rational Erf | 535 | 0.59 | 2 | Range-reduced rational |
 | B1v2 Sigmoid | 625 | 1.50 | 34 | Quadratic sigmoid |
-| R3 PWL | 832 | 36.85 | 98 | High near-zero error |
+| D3 LUT+Corr | 830 | 1.84 | 41 | Coarse LUT + correction |
+| R3 PWL | 832 | 36.85 | 97 | High near-zero error |
+| C2 Piecewise | 881 | 1.18 | 1 | Piecewise rational |
 | B1 Sigmoid | 1068 | 1.67 | 18 | Simple sigmoid |
-| R2 Rational | 1139 | 1.22 | 3 | Rational Padé |
-| R1 Poly-9 | 1312 | 1.43 | 33 | Polynomial core |
+| R2 Rational | 1139 | 1.22 | 2 | Rational Padé |
+| A4 Cont.Frac | 1206 | 1.73 | 15 | Continued fraction |
+| A3 Chebyshev | 1207 | 2.57 | 45 | Chebyshev (Clenshaw) |
+| H3 SoftEx | 1247 | 1.28 | 1 | Arithmetic exp via Padé |
+| R1 Poly-9 | 1312 | 1.43 | 1 | Polynomial core |
 | A1 Direct Poly | 1404-1547 | 3.58-3.61 | 33 | Direct polynomial (7th/9th degree) |
-| R5 LUT | 13215 | 15.02 | 0 | LUT (needs separate tail handler) |
 
 **Saturation thresholds**: x ≥ 3 → x, x ≤ -9 → 0
 
