@@ -73,15 +73,11 @@ g++ -std=c++23 -O2 -o ulp_calculator ulp_calculator.cpp
 | **R5** | LUT + extended tail | **0.10** | **145** |
 | **C1** | Cubic spline (9-seg) | **0.13** | **145** |
 | **B3** | Erf polynomial (A-S) | **0.13** | **145** |
+| **D2** | LUT tails + B3 erf | 0.13 | 145 |
+| **F2** | Quadrature + B3 erf | 0.13 | 145 |
 | **R4** | Tanh-form + Padé | 0.14 | 166 |
-
-### Known Issues
-
-| Method | Max ULP | Issue |
-|--------|---------|-------|
-| D2, D4, F2, F3 | >10000 | Arithmetic-only exp() fails for |x| > 2 in core_neg |
-
-**Fix needed**: Extend tail LUT into [-3, -2] region for these methods.
+| **F3** | CF + B3 erf fallback | 0.15 | 145 |
+| **D4** | Non-uniform LUT | 0.63 | 145 |
 
 ## Current Results
 
@@ -90,7 +86,11 @@ g++ -std=c++23 -O2 -o ulp_calculator ulp_calculator.cpp
 | **R5 LUT** | **145** | **0.10** | 0 | **Best overall** - 512 entries + extended tail |
 | **C1 Cubic Spline** | **145** | **0.13** | 0 | 9-seg Hermite + Taylor near-zero |
 | **B3 Erf Polynomial** | **145** | **0.13** | 0 | Piecewise erf (Taylor + rational) |
+| **D2 LUT+Erf** | **145** | **0.13** | 0 | LUT tails + B3-style erf core |
+| **F2 Quadrature** | **145** | **0.13** | 0 | Gauss-Legendre + B3 erf fallback |
 | **R4 Tanh** | 166 | 0.14 | 0 | Tanh-form + [3,3] Padé |
+| **F3 CF Erf** | **145** | **0.15** | 0 | Continued fraction + B3 erf fallback |
+| **D4 Non-uniform** | **145** | **0.63** | 28 | Non-uniform LUT + Taylor near-zero |
 | B4 Rational Erf | 535 | 0.59 | 2 | Range-reduced rational |
 | B1v2 Sigmoid | 625 | 1.50 | 34 | Quadratic sigmoid |
 | D3 LUT+Corr | 830 | 1.84 | 41 | Coarse LUT + correction |
