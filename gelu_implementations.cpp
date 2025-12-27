@@ -103,6 +103,9 @@ namespace constants {
     // √2 ≈ 1.4142135623730951
     constexpr double SQRT_2 = 1.4142135623730950488016887242096980785697;
 
+    // 1/√(2π) ≈ 0.3989422804014327 - used in PDF of standard normal
+    constexpr double INV_SQRT_2PI = 0.3989422804014326779399460599343818684759;
+
     // Coefficient for tanh-form GELU: 0.044715
     constexpr double TANH_COEFF = 0.044715;
 
@@ -126,8 +129,18 @@ namespace constants {
  * @return GELU(x) computed with float64 precision
  */
 double gelu_reference_f64(double x) {
-    // Φ(x) = 0.5 * (1 + erf(x / √2))
-    double phi = 0.5 * (1.0 + std::erf(x * constants::INV_SQRT_2));
+    // For x < 0, use erfc to avoid catastrophic cancellation in 1 + erf(z)
+    // when erf(z) is very close to -1 (large negative z)
+    //
+    // For x >= 0: Φ(x) = 0.5 * (1 + erf(x/√2))
+    // For x < 0:  Φ(x) = 0.5 * erfc(-x/√2)  [since erfc(z) = 1 - erf(z)]
+    double z = x * constants::INV_SQRT_2;
+    double phi;
+    if (x >= 0) {
+        phi = 0.5 * (1.0 + std::erf(z));
+    } else {
+        phi = 0.5 * std::erfc(-z);
+    }
     return x * phi;
 }
 
@@ -191,7 +204,8 @@ namespace tail_lut {
     // Extended LUT covering [-8.3125, -3.5]
     // - Main region: 0.25 step from -3.5 to -8.0 (19 entries)
     // - Fine region: 0.0625 step from -8.0 to -8.3125 (6 entries)
-    // Values computed from GELU(x) = x * 0.5 * (1 + erf(x/√2))
+    // Values computed using erfc to avoid catastrophic cancellation:
+    // GELU(x) = x * 0.5 * erfc(-x/√2) for x < 0
 
     // Main LUT: 0.25 step from -3.5 to -8.0
     constexpr float GELU_N3_50 = -8.14202e-04f;   // x = -3.50
@@ -205,22 +219,22 @@ namespace tail_lut {
     constexpr float GELU_N5_50 = -1.04443e-07f;   // x = -5.50
     constexpr float GELU_N5_75 = -2.56575e-08f;   // x = -5.75
     constexpr float GELU_N6_00 = -5.91953e-09f;   // x = -6.00
-    constexpr float GELU_N6_25 = -1.28266e-09f;   // x = -6.25
+    constexpr float GELU_N6_25 = -1.28267e-09f;   // x = -6.25
     constexpr float GELU_N6_50 = -2.61040e-10f;   // x = -6.50
     constexpr float GELU_N6_75 = -4.98977e-11f;   // x = -6.75
-    constexpr float GELU_N7_00 = -8.95867e-12f;   // x = -7.00
-    constexpr float GELU_N7_25 = -1.51082e-12f;   // x = -7.25
-    constexpr float GELU_N7_50 = -2.39392e-13f;   // x = -7.50
-    constexpr float GELU_N7_75 = -3.57075e-14f;   // x = -7.75
-    constexpr float GELU_N8_00 = -4.88498e-15f;   // x = -8.00, bf16=0xa7b0
+    constexpr float GELU_N7_00 = -8.95869e-12f;   // x = -7.00
+    constexpr float GELU_N7_25 = -1.51080e-12f;   // x = -7.25
+    constexpr float GELU_N7_50 = -2.39317e-13f;   // x = -7.50
+    constexpr float GELU_N7_75 = -3.56084e-14f;   // x = -7.75
+    constexpr float GELU_N8_00 = -4.97677e-15f;   // x = -8.00, bf16=0xa7b3
 
-    // Fine LUT: 0.0625 step from -8.0625 to -8.3125 (fixes interpolation errors)
-    constexpr float GELU_N8_0625 = -3.13291e-15f;  // x = -8.0625, bf16=0xa762
-    constexpr float GELU_N8_125  = -1.80411e-15f;  // x = -8.125,  bf16=0xa702
-    constexpr float GELU_N8_1875 = -9.08995e-16f;  // x = -8.1875, bf16=0xa683
-    constexpr float GELU_N8_25   = -4.57967e-16f;  // x = -8.25,   bf16=0xa604
-    constexpr float GELU_N8_3125 = -4.61436e-16f;  // x = -8.3125, bf16=0xa605 (FIXED!)
-    // Beyond x=-8.3125, bf16 underflows to -0 (0x8000)
+    // Fine LUT: 0.0625 step from -8.0625 to -8.3125 (computed with erfc)
+    constexpr float GELU_N8_0625 = -3.01335e-15f;  // x = -8.0625, bf16=0xa759
+    constexpr float GELU_N8_125  = -1.81741e-15f;  // x = -8.125,  bf16=0xa703
+    constexpr float GELU_N8_1875 = -1.09184e-15f;  // x = -8.1875, bf16=0xa69d
+    constexpr float GELU_N8_25   = -6.53377e-16f;  // x = -8.25,   bf16=0xa63c
+    constexpr float GELU_N8_3125 = -3.89468e-16f;  // x = -8.3125, bf16=0xa5e1
+    // Beyond x=-8.3125, asymptotic expansion handles correctly
 
     // Main LUT array: 0.25 step from -3.5 to -8.0 (indices 0-18)
     constexpr float LUT_MAIN[] = {
@@ -244,23 +258,101 @@ namespace tail_lut {
     constexpr float LUT_FINE_STEP = -0.0625f;
 }
 
+// ============================================================================
+// FAST EXP APPROXIMATION (for asymptotic tail computation)
+// ============================================================================
+
 /**
- * @brief Negative tail GELU handler using extended two-tier LUT
+ * @brief Fast approximation of 2^x for negative x using bit manipulation
  *
- * Covers x ∈ [-8.3125, -3.5] with LUT + linear interpolation.
- * - Main region: 0.25-step from -3.5 to -8.0 (19 entries)
- * - Fine region: 0.0625-step from -8.0 to -8.3125 (6 entries)
- * For x < -8.3125, returns 0 (bf16 underflows to -0).
+ * Decomposes x = n + f where n is integer part, f is fractional part.
+ * 2^x = 2^n * 2^f
+ * - 2^n computed via IEEE754 exponent manipulation
+ * - 2^f approximated with minimax polynomial
+ */
+inline float fast_exp2_neg(float x) {
+    // For very negative x, underflow to zero
+    if (x < -126.0f) return 0.0f;
+
+    // Split into integer and fractional parts
+    float n = std::floor(x);
+    float f = x - n;  // f is in [0, 1)
+
+    // Minimax polynomial for 2^f on [0, 1]: 2^f ≈ 1 + f*ln(2) + f²*ln²(2)/2 + ...
+    // Using optimized coefficients for better accuracy
+    float f2 = f * f;
+    float f3 = f2 * f;
+    float f4 = f2 * f2;
+    float pow2_frac = 1.0f + 0.6931472f * f + 0.2402265f * f2
+                    + 0.0555041f * f3 + 0.0096139f * f4;
+
+    // Compute 2^n via IEEE754 exponent manipulation
+    int32_t exp_bits = static_cast<int32_t>(n) + 127;
+    if (exp_bits <= 0) return 0.0f;  // Underflow
+
+    uint32_t bits = static_cast<uint32_t>(exp_bits) << 23;
+    float pow2_int;
+    std::memcpy(&pow2_int, &bits, sizeof(float));
+
+    return pow2_int * pow2_frac;
+}
+
+/**
+ * @brief Fast approximation of exp(-u) for u > 0
  *
- * This approach avoids the broken exp() approximation that was causing
- * Max ULP errors of ~10000 in the deep negative tail.
+ * Uses identity: exp(-u) = 2^(-u/ln(2))
+ */
+inline float fast_exp_neg(float u) {
+    constexpr float inv_ln2 = 1.4426950408889634f;  // 1/ln(2)
+    return fast_exp2_neg(-u * inv_ln2);
+}
+
+/**
+ * @brief Asymptotic GELU for deep negative tail
+ *
+ * For x << 0: GELU(x) ≈ -φ(x) * (1 - 1/x² + 3/x⁴ - 15/x⁶)
+ * where φ(x) = exp(-x²/2) / √(2π)
+ *
+ * This captures the exponential decay that rational approximations miss.
+ */
+inline float gelu_asymptotic(float x) {
+    constexpr float inv_sqrt_2pi = 0.3989422804014327f;  // 1/√(2π)
+    float x2 = x * x;
+    float x2_half = x2 * 0.5f;
+    float exp_val = fast_exp_neg(x2_half);
+
+    // If exp underflowed to zero, return zero
+    if (exp_val == 0.0f) {
+        return 0.0f;
+    }
+
+    float phi_x = exp_val * inv_sqrt_2pi;  // φ(x)
+
+    // Correction terms: (1 - 1/x² + 3/x⁴ - 15/x⁶)
+    float inv_x2 = 1.0f / x2;
+    float inv_x4 = inv_x2 * inv_x2;
+    float inv_x6 = inv_x4 * inv_x2;
+    float correction = 1.0f - inv_x2 + 3.0f * inv_x4 - 15.0f * inv_x6;
+
+    return -phi_x * correction;
+}
+
+/**
+ * @brief Negative tail GELU handler using LUT + asymptotic expansion
+ *
+ * Covers x ∈ [-∞, -3.5] with:
+ * - Main LUT region: 0.25-step from -3.5 to -8.0 (19 entries)
+ * - Fine LUT region: 0.0625-step from -8.0 to -8.3125 (6 entries)
+ * - Deep tail (x < -8.3125): asymptotic expansion
+ *
+ * The asymptotic expansion correctly captures the exponential decay.
  */
 inline float gelu_negative_tail(float x) {
     using namespace tail_lut;
 
-    // x < -8.3125: bf16 underflows to -0, so return 0
+    // Deep tail: x < -8.3125 - use asymptotic expansion
     if (x < LUT_END) {
-        return 0.0f;
+        return gelu_asymptotic(x);
     }
 
     // x >= -3.5: should be handled by core approximation, not this function
@@ -320,15 +412,12 @@ inline float gelu_negative_tail(float x) {
 std::bfloat16_t gelu_b1_sigmoid(std::bfloat16_t x_bf16) {
     float x = static_cast<float>(x_bf16);
 
-    // Saturation thresholds
+    // Positive saturation
     if (x >= thresholds::POS) {
         return static_cast<std::bfloat16_t>(x);
     }
-    if (x <= thresholds::NEG) {
-        return static_cast<std::bfloat16_t>(0.0f);
-    }
 
-    // Negative tail: use specialized handler for x < -4
+    // Negative tail: use specialized handler (includes asymptotic for deep tail)
     if (x < thresholds::TAIL_START) {
         return static_cast<std::bfloat16_t>(gelu_negative_tail(x));
     }
@@ -368,11 +457,8 @@ std::bfloat16_t gelu_b1_sigmoid_v2(std::bfloat16_t x_bf16) {
     if (x >= thresholds::POS) {
         return static_cast<std::bfloat16_t>(x);
     }
-    if (x <= thresholds::NEG) {
-        return static_cast<std::bfloat16_t>(0.0f);
-    }
 
-    // Negative tail: use specialized handler for x < -4
+    // Negative tail: use specialized handler (includes asymptotic for deep tail)
     if (x < thresholds::TAIL_START) {
         return static_cast<std::bfloat16_t>(gelu_negative_tail(x));
     }
@@ -417,11 +503,8 @@ std::bfloat16_t gelu_r1_saturation_poly(std::bfloat16_t x_bf16) {
     if (x >= thresholds::POS) {
         return static_cast<std::bfloat16_t>(x);
     }
-    if (x <= thresholds::NEG) {
-        return static_cast<std::bfloat16_t>(0.0f);
-    }
 
-    // Negative tail: use specialized handler for x < -4
+    // Negative tail: use specialized handler (includes asymptotic for deep tail)
     if (x < thresholds::TAIL_START) {
         return static_cast<std::bfloat16_t>(gelu_negative_tail(x));
     }
@@ -481,11 +564,8 @@ std::bfloat16_t gelu_r2_rational_pade(std::bfloat16_t x_bf16) {
     if (x >= thresholds::POS) {
         return static_cast<std::bfloat16_t>(x);
     }
-    if (x <= thresholds::NEG) {
-        return static_cast<std::bfloat16_t>(0.0f);
-    }
 
-    // Negative tail: use specialized handler for x < -4
+    // Negative tail: use specialized handler (includes asymptotic for deep tail)
     if (x < thresholds::TAIL_START) {
         return static_cast<std::bfloat16_t>(gelu_negative_tail(x));
     }
@@ -551,12 +631,9 @@ std::bfloat16_t gelu_r2_rational_pade(std::bfloat16_t x_bf16) {
 std::bfloat16_t gelu_r3_pwl(std::bfloat16_t x_bf16) {
     float x = static_cast<float>(x_bf16);
 
-    // Saturation thresholds
+    // Positive saturation
     if (x >= thresholds::POS) {
         return static_cast<std::bfloat16_t>(x);
-    }
-    if (x <= thresholds::NEG) {
-        return static_cast<std::bfloat16_t>(0.0f);
     }
 
     // Precomputed segment parameters (slope, intercept)
@@ -624,11 +701,8 @@ std::bfloat16_t gelu_r4_tanh_rational(std::bfloat16_t x_bf16) {
     if (x >= thresholds::POS) {
         return static_cast<std::bfloat16_t>(x);
     }
-    if (x <= thresholds::NEG) {
-        return static_cast<std::bfloat16_t>(0.0f);
-    }
 
-    // Negative tail: use specialized handler for x < -4
+    // Negative tail: use specialized handler (includes asymptotic for deep tail)
     if (x < thresholds::TAIL_START) {
         return static_cast<std::bfloat16_t>(gelu_negative_tail(x));
     }
@@ -786,9 +860,7 @@ std::bfloat16_t gelu_a1_poly7(std::bfloat16_t x_bf16) {
     if (x >= thresholds::POS) {
         return static_cast<std::bfloat16_t>(x);
     }
-    if (x <= thresholds::NEG) {
-        return static_cast<std::bfloat16_t>(0.0f);
-    }
+    // Negative tail: use specialized handler (includes asymptotic for deep tail)
     if (x < thresholds::TAIL_START) {
         return static_cast<std::bfloat16_t>(gelu_negative_tail(x));
     }
@@ -827,9 +899,7 @@ std::bfloat16_t gelu_a1_poly9(std::bfloat16_t x_bf16) {
     if (x >= thresholds::POS) {
         return static_cast<std::bfloat16_t>(x);
     }
-    if (x <= thresholds::NEG) {
-        return static_cast<std::bfloat16_t>(0.0f);
-    }
+    // Negative tail: use specialized handler (includes asymptotic for deep tail)
     if (x < thresholds::TAIL_START) {
         return static_cast<std::bfloat16_t>(gelu_negative_tail(x));
     }
@@ -954,9 +1024,7 @@ std::bfloat16_t gelu_c1_cubic_spline(std::bfloat16_t x_bf16) {
     if (x >= thresholds::POS) {
         return static_cast<std::bfloat16_t>(x);
     }
-    if (x <= thresholds::NEG) {
-        return static_cast<std::bfloat16_t>(0.0f);
-    }
+    // Negative tail: use specialized handler (includes asymptotic for deep tail)
     if (x < thresholds::TAIL_START) {
         return static_cast<std::bfloat16_t>(gelu_negative_tail(x));
     }
@@ -1022,9 +1090,7 @@ std::bfloat16_t gelu_b3_erf_poly(std::bfloat16_t x_bf16) {
     if (x >= thresholds::POS) {
         return static_cast<std::bfloat16_t>(x);
     }
-    if (x <= thresholds::NEG) {
-        return static_cast<std::bfloat16_t>(0.0f);
-    }
+    // Negative tail: use specialized handler (includes asymptotic for deep tail)
     if (x < thresholds::TAIL_START) {
         return static_cast<std::bfloat16_t>(gelu_negative_tail(x));
     }
@@ -1061,6 +1127,77 @@ std::bfloat16_t gelu_b3_erf_poly(std::bfloat16_t x_bf16) {
         float p = a1 * t + a2 * t2 + a3 * t3 + a4 * t4;
         float denom = 1.0f + p;
         float abs_erf = 1.0f - 1.0f / (denom * denom * denom * denom);  // (1 + p)^(-4)
+        erf_z = (z >= 0) ? abs_erf : -abs_erf;
+    }
+
+    // Clamp erf to [-1, 1]
+    erf_z = std::max(-1.0f, std::min(1.0f, erf_z));
+
+    // Φ(x) = 0.5 * (1 + erf(x/√2))
+    float phi = 0.5f * (1.0f + erf_z);
+
+    // GELU(x) = x * Φ(x)
+    float result = x * phi;
+
+    return static_cast<std::bfloat16_t>(result);
+}
+
+// ============================================================================
+// B3 PURE: ERF POLYNOMIAL WITHOUT LUT FALLBACK
+// ============================================================================
+
+/**
+ * @brief B3 Pure: Abramowitz-Stegun erf approximation for ENTIRE range
+ *
+ * This is the "scientifically honest" version of B3 that uses consistent
+ * mathematical approaches for the entire input range. No LUT fallback.
+ *
+ * For the negative tail (x < -3), uses asymptotic expansion via gelu_asymptotic().
+ * This captures the exponential decay that the rational approximation misses.
+ */
+std::bfloat16_t gelu_b3_pure(std::bfloat16_t x_bf16) {
+    float x = static_cast<float>(x_bf16);
+
+    // Positive saturation: GELU(x) ≈ x for x >= 3
+    if (x >= thresholds::POS) {
+        return static_cast<std::bfloat16_t>(x);
+    }
+
+    // For negative tail (x < -3), use asymptotic expansion
+    if (x < -3.0f) {
+        return static_cast<std::bfloat16_t>(gelu_asymptotic(x));
+    }
+
+    // Compute erf(x/√2) using Abramowitz-Stegun rational approximation
+    constexpr float inv_sqrt_2 = 0.7071067811865475f;
+    float z = x * inv_sqrt_2;
+    float abs_z = std::abs(z);
+    float z2 = z * z;
+
+    float erf_z;
+    if (abs_z < 1.0f) {
+        // Taylor series for small z: erf(z) ≈ (2/√π) * z * (1 - z²/3 + z⁴/10 - z⁶/42)
+        constexpr float two_over_sqrt_pi = 1.1283791670955126f;
+        float z4 = z2 * z2;
+        float z6 = z4 * z2;
+        float series = 1.0f - 0.333333333f * z2 + 0.1f * z4 - 0.023809524f * z6;
+        erf_z = two_over_sqrt_pi * z * series;
+    } else {
+        // Abramowitz-Stegun rational approximation for |z| >= 1
+        // erf(z) ≈ sign(z) * (1 - 1/(1 + p(|z|))^4)
+        // This approximation approaches ±1 for large |z|
+        constexpr float a1 = 0.278393f;
+        constexpr float a2 = 0.230389f;
+        constexpr float a3 = 0.000972f;
+        constexpr float a4 = 0.078108f;
+
+        float t = abs_z;
+        float t2 = t * t;
+        float t3 = t2 * t;
+        float t4 = t2 * t2;
+        float p = a1 * t + a2 * t2 + a3 * t3 + a4 * t4;
+        float denom = 1.0f + p;
+        float abs_erf = 1.0f - 1.0f / (denom * denom * denom * denom);
         erf_z = (z >= 0) ? abs_erf : -abs_erf;
     }
 
@@ -1697,18 +1834,33 @@ std::bfloat16_t gelu_f3_cf_erf(std::bfloat16_t x_bf16) {
 }
 
 // ============================================================================
-// H1: INVERTED GELU
+// H1: INVERTED GELU (REFERENCE IMPLEMENTATION)
 // ============================================================================
 
 /**
- * @brief H1: Inverted GELU (GELU⁻¹) approximation
+ * @brief Helper: compute Φ(x) using erfc for negative x to avoid cancellation
+ */
+inline float phi_reference(float x) {
+    float z = x * static_cast<float>(constants::INV_SQRT_2);
+    if (x >= 0) {
+        return 0.5f * (1.0f + std::erf(z));
+    } else {
+        return 0.5f * std::erfc(-z);
+    }
+}
+
+/**
+ * @brief H1: Inverted GELU (GELU⁻¹) - Reference implementation
  *
- * Approximates the inverse function: given y = GELU(x), find x.
+ * Computes the inverse function: given y = GELU(x), find x.
  * Useful for memory-efficient backpropagation.
+ *
+ * NOTE: This is a REFERENCE implementation using std::erf/std::erfc/std::exp.
+ * It's not an arithmetic-only approximation but serves as a utility function.
  *
  * Uses Newton-Raphson iteration with initial guess from linear approximation.
  */
-std::bfloat16_t gelu_inverse(std::bfloat16_t y_bf16) {
+std::bfloat16_t gelu_inverse_reference(std::bfloat16_t y_bf16) {
     float y = static_cast<float>(y_bf16);
 
     // Handle edge cases
@@ -1723,12 +1875,12 @@ std::bfloat16_t gelu_inverse(std::bfloat16_t y_bf16) {
         // Newton-Raphson: x_{n+1} = x_n - (GELU(x_n) - y) / GELU'(x_n)
         for (int iter = 0; iter < 4; ++iter) {
             float x2 = x * x;
-            // Approximate GELU(x) and GELU'(x)
-            float phi = 0.5f * (1.0f + std::erf(x * static_cast<float>(constants::INV_SQRT_2)));
+            float phi = phi_reference(x);
             float gelu_x = x * phi;
 
-            // GELU'(x) = Φ(x) + x * φ(x)
-            float phi_pdf = 0.3989422804f * std::exp(-0.5f * x2);  // Using exp for reference
+            // GELU'(x) = Φ(x) + x * φ(x), where φ(x) = exp(-x²/2) / √(2π)
+            constexpr float inv_sqrt_2pi = 0.3989422804f;
+            float phi_pdf = inv_sqrt_2pi * std::exp(-0.5f * x2);
             float gelu_prime = phi + x * phi_pdf;
 
             if (std::abs(gelu_prime) < 1e-10f) break;
@@ -1749,10 +1901,11 @@ std::bfloat16_t gelu_inverse(std::bfloat16_t y_bf16) {
 
         for (int iter = 0; iter < 6; ++iter) {
             float x2 = x * x;
-            float phi = 0.5f * (1.0f + std::erf(x * static_cast<float>(constants::INV_SQRT_2)));
+            float phi = phi_reference(x);
             float gelu_x = x * phi;
 
-            float phi_pdf = 0.3989422804f * std::exp(-0.5f * x2);
+            constexpr float inv_sqrt_2pi = 0.3989422804f;
+            float phi_pdf = inv_sqrt_2pi * std::exp(-0.5f * x2);
             float gelu_prime = phi + x * phi_pdf;
 
             if (std::abs(gelu_prime) < 1e-10f) break;
@@ -1765,6 +1918,11 @@ std::bfloat16_t gelu_inverse(std::bfloat16_t y_bf16) {
 
         return static_cast<std::bfloat16_t>(x);
     }
+}
+
+// Backwards compatibility alias
+inline std::bfloat16_t gelu_inverse(std::bfloat16_t y_bf16) {
+    return gelu_inverse_reference(y_bf16);
 }
 
 // ============================================================================
@@ -1938,10 +2096,25 @@ std::bfloat16_t gelu_derivative(std::bfloat16_t x_bf16) {
 
 /**
  * @brief Reference GELU derivative using float64
+ *
+ * GELU'(x) = Φ(x) + x * φ(x)
+ * where Φ(x) is CDF and φ(x) is PDF of standard normal.
+ *
+ * Uses erfc for negative x to avoid catastrophic cancellation.
  */
 double gelu_derivative_reference_f64(double x) {
-    double phi = 0.5 * (1.0 + std::erf(x * constants::INV_SQRT_2));
+    // Compute Φ(x) using erfc for negative x (same pattern as gelu_reference_f64)
+    double z = x * constants::INV_SQRT_2;
+    double phi;
+    if (x >= 0) {
+        phi = 0.5 * (1.0 + std::erf(z));
+    } else {
+        phi = 0.5 * std::erfc(-z);
+    }
+
+    // φ(x) = exp(-x²/2) / √(2π)
     double pdf = std::exp(-0.5 * x * x) / std::sqrt(2.0 * M_PI);
+
     return phi + x * pdf;
 }
 
@@ -2574,8 +2747,8 @@ void calibrate_tail_values() {
     std::cout << "================================================================" << std::endl;
 
     std::cout << "\nnamespace tail_lut {" << std::endl;
-    std::cout << "    // GELU values at integer and half-integer points from -9 to -4" << std::endl;
-    std::cout << "    // Computed from GELU(x) = x * 0.5 * (1 + erf(x/√2))" << std::endl;
+    std::cout << "    // GELU values computed using erfc to avoid cancellation" << std::endl;
+    std::cout << "    // GELU(x) = x * 0.5 * erfc(-x/√2) for x < 0" << std::endl;
 
     // Fine-grained points at 0.25 step for main coverage
     std::vector<double> points;
@@ -2588,7 +2761,9 @@ void calibrate_tail_values() {
     }
 
     for (double x : points) {
-        double phi = 0.5 * (1.0 + std::erf(x * constants::INV_SQRT_2));
+        // Use erfc for negative x to avoid catastrophic cancellation
+        double z = x * constants::INV_SQRT_2;
+        double phi = 0.5 * std::erfc(-z);  // Correct formula for negative x
         double gelu = x * phi;
 
         // Generate C constant name
@@ -2609,7 +2784,9 @@ void calibrate_tail_values() {
     std::cout << std::string(72, '-') << std::endl;
 
     for (double x : points) {
-        double phi = 0.5 * (1.0 + std::erf(x * constants::INV_SQRT_2));
+        // Use erfc for negative x to avoid catastrophic cancellation
+        double z = x * constants::INV_SQRT_2;
+        double phi = 0.5 * std::erfc(-z);
         double gelu = x * phi;
         float gelu_f = static_cast<float>(gelu);
         std::bfloat16_t gelu_bf16 = static_cast<std::bfloat16_t>(gelu_f);
@@ -3820,6 +3997,7 @@ int main(int argc, char* argv[]) {
             {"B1: Sigmoid-based GELU", gelu_b1_sigmoid},
             {"B1v2: Sigmoid (sqrt)", gelu_b1_sigmoid_v2},
             {"B3: Erf Polynomial (A-S)", gelu_b3_erf_poly},
+            {"B3 Pure: Erf (no LUT)", gelu_b3_pure},
             {"B4: Rational Erf (range red)", gelu_b4_rational_erf},
             // Category C: Piecewise methods
             {"C1: Cubic Spline (8 seg)", gelu_c1_cubic_spline},
