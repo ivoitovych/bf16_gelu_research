@@ -53,18 +53,28 @@ g++ -std=c++23 -O2 -o ulp_calculator ulp_calculator.cpp
 
 ## Implementation Status vs FinalLists.md
 
-### All Phases Complete ✓
+### Coverage: 35/40 methods (87.5%)
 
-| Category | Methods Implemented | Status |
-|----------|---------------------|--------|
-| **A: Direct** | A1 (poly-7, poly-9), A3 (Chebyshev), A4 (cont.frac) | ✓ Complete |
-| **B: Sub-function** | B1, B1v2 (sigmoid), B3 (erf poly), B4 (rational erf) | ✓ Complete |
-| **C: Piecewise** | C1 (spline), C2 (piecewise rational) | ✓ Complete |
-| **D: Hybrid/LUT** | R5/D1 (LUT), D2 (LUT+poly), D3 (LUT+corr), D4 (nonuniform) | ✓ Complete |
-| **E: BF16 Knobs** | E2 (quantization), E6 (FMA), E7 (sensitivity) | ✓ Complete |
-| **F: Reference** | F1 (float64), F2 (quadrature), F3 (CF erf) | ✓ Complete |
-| **G: Methodology** | G1-G5, G7/G8 | ✓ Complete |
-| **H: Advanced** | H1 (inverse), H3 (SoftEx) | ✓ Complete |
+| Category | Total | Done | Methods Implemented |
+|----------|-------|------|---------------------|
+| **A: Direct** | 4 | 4 ✓ | A1 (poly-7, poly-9), A2 ([4/4]), A3 (Chebyshev), A4 (CF) |
+| **B: Sub-function** | 4 | 4 ✓ | B1, B1v2 (sigmoid), B2/R4 (tanh), B3 (erf), B4 (rational erf) |
+| **C: Piecewise** | 5 | 4 | C1 (spline), C2 (rational), C3/R3 (PWL), C4/R1 (sat+core) |
+| **D: Hybrid/LUT** | 4 | 4 ✓ | D1/R5 (LUT), D2 (LUT+erf), D3 (LUT+corr), D4 (nonuniform) |
+| **E: BF16 Knobs** | 8 | 5 | E1 (bounds), E2 (quant), E4 (breakpoints), E6 (FMA), E7 (sens) |
+| **F: Reference** | 4 | 4 ✓ | F1 (float64), F2 (quadrature), F3 (CF erf), F4 (in B3) |
+| **G: Methodology** | 8 | 8 ✓ | G1-G8 all complete |
+| **H: Advanced** | 3 | 2 | H1 (inverse), H3 (SoftEx) |
+
+### Remaining Gaps (5 items)
+
+| ID | Method | Priority | Reason |
+|----|--------|----------|--------|
+| C5 | EPSS knot refinement | Low | Optimization technique, not core method |
+| E3 | Range-Scaled Approximation | Low | Theoretical, marginal benefit expected |
+| E5 | Denormal Policy Testing | Medium | Would verify subnormal edge cases |
+| E8 | FTZ Policy Testing | Medium | Same as E5, flush-to-zero behavior |
+| H2 | GELU-Softmax Unit | Low | Hardware-specific, out of project scope |
 
 ### Best Performers (Max ULP ≤ 200)
 
