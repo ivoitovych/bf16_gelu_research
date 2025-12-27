@@ -18,7 +18,7 @@ g++ -std=c++23 -O3 -march=native -o gelu_analysis gelu_implementations.cpp -lm
 g++ -std=c++23 -O2 -o ulp_calculator ulp_calculator.cpp
 
 # Run analysis
-./gelu_analysis --analyze      # Full ULP analysis (22 methods)
+./gelu_analysis --analyze      # Full ULP analysis (24 methods)
 ./gelu_analysis --diagnose     # Diagnostic mode
 ./gelu_analysis --reference    # Show reference values
 ./gelu_analysis --saturation   # Analyze saturation boundaries
@@ -44,7 +44,7 @@ g++ -std=c++23 -O2 -o ulp_calculator ulp_calculator.cpp
 | `gelu_implementations.cpp` | GELU approximations (R1-R5) + analysis framework |
 | `ulp_calculator.cpp` | Reference ULP calculator with lookup table |
 | `test_bfloat16.cpp` | Compiler bfloat16 support verification |
-| `FinalLists.md` | Strategy taxonomy (Categories A-H, 35 methods) |
+| `FinalLists.md` | Strategy taxonomy (Categories A-H, 40 methods) |
 | `CLAUDE.md` | Project instructions (this file) |
 | `HISTORY.md` | Development history and decisions |
 
