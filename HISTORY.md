@@ -1036,5 +1036,83 @@ Both new approximation methods use B3 erf fallback for core_neg region, achievin
 **COMPLETE.** All 40 methods from FinalLists.md taxonomy are now implemented:
 - 24 GELU approximation methods (testable via `--analyze`)
 - 12+ analysis functions (testable via specialized flags)
-- 8 methods achieve Max ULP = 145 (bf16 underflow limit)
+- 8 methods achieve Max ULP ≤ 88 (improved in Session 11)
 - 100% coverage of taxonomy across all 8 categories
+
+---
+
+## Session 11: Fix Tail LUT Values (Max ULP 145→87)
+
+### Objective
+Investigate and fix high ULP errors in the negative tail region for the best methods.
+
+### Problem Analysis
+
+The `--tail-debug` analysis revealed that Max ULP of 145 at x=-8.3125 was caused by **incorrect LUT values**:
+
+| x | LUT Value (Wrong) | Correct Value | Error |
+|---|-------------------|---------------|-------|
+| -8.3125 | -2.12e-16 | -4.6144e-16 | 2× off |
+| -3.75 | -5.2384e-04 | -3.3156e-04 | 1.6× off |
+
+Additional errors occurred from linear interpolation not matching exponential decay between -8.0 and -8.25.
+
+### Solution: Two-Tier LUT
+
+Replaced single-resolution LUT with two-tier approach:
+
+```cpp
+// Main LUT: 0.25 step from -3.5 to -8.0 (19 entries)
+constexpr float LUT_MAIN[] = { GELU_N3_50, ..., GELU_N8_00 };
+
+// Fine LUT: 0.0625 step from -8.0 to -8.3125 (6 entries)
+constexpr float LUT_FINE[] = {
+    GELU_N8_00,    // -4.88498e-15
+    GELU_N8_0625,  // -3.13291e-15
+    GELU_N8_125,   // -1.80411e-15
+    GELU_N8_1875,  // -9.08995e-16
+    GELU_N8_25,    // -4.57967e-16
+    GELU_N8_3125   // -4.61436e-16 (FIXED!)
+};
+```
+
+Key fixes:
+1. Corrected GELU_N8_3125 from -2.12e-16 to -4.61436e-16
+2. Corrected GELU_N3_75 from -5.2384e-04 to -3.3156e-04
+3. Added 6 fine entries between -8.0 and -8.3125 (0.0625 step)
+
+### Results
+
+| Method | Old Max ULP | New Max ULP | Improvement |
+|--------|-------------|-------------|-------------|
+| R5 LUT | 145 | **87** | 40% |
+| C1 Spline | 145 | **87** | 40% |
+| B3 Erf | 145 | **87** | 40% |
+| D2 LUT+Erf | 145 | **87** | 40% |
+| D4 Non-uniform | 145 | **88** | 39% |
+| F2 Quadrature | 145 | **87** | 40% |
+| F3 CF Erf | 145 | **87** | 40% |
+
+The remaining 87 ULP error occurs at x ≈ -7.65 where linear interpolation between -7.5 and -7.75 doesn't match the exponential decay of GELU.
+
+### New Analysis Mode
+
+Added `--tail-debug` flag for detailed tail ULP analysis:
+- Shows ULP at each tail LUT point
+- Identifies worst case location
+- Compares reference vs approximation bf16 values
+- Suggests potential improvements
+
+### Files Modified
+- `gelu_implementations.cpp`: Two-tier LUT, fixed values, --tail-debug
+- `README.md`: Updated Max ULP tables (145→87)
+- `CLAUDE.md`: Updated results tables
+- `HISTORY.md`: This session documentation
+
+### Key Insight
+
+The original Max ULP of 145 was NOT an inherent limitation of bf16 representation. It was caused by:
+1. Incorrect LUT calibration values
+2. Insufficient resolution near the underflow boundary
+
+With correct values and finer resolution, Max ULP dropped to 87 (linear interpolation error).
