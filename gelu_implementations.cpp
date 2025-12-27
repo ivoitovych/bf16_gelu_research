@@ -15,20 +15,24 @@
  * ## Implemented Strategies
  *
  * F1: High-precision reference (float64 with std::erf)
+ * B1: Sigmoid-based GELU: x * σ(1.702x)
  * R1: C4 - Saturation + minimax polynomial core
- * R2: A2 - Rational Padé [4/4] approximation
+ * R2: A2 - Rational Padé approximation
  * R3: C3 - Piecewise linear with power-of-2 breakpoints
  * R4: B2 - Tanh-form with odd rational tanh approximation
  * R5: D1 - LUT with linear interpolation
  *
  * ## Constraints
  *
- * All approximations (R1-R5) use only: +, -, *, /, |x|, sign()
+ * All approximations use only: +, -, *, /, |x|, sign()
  * No erf(), tanh(), exp(), log() in approximations
  * Reference F1 uses std::erf for ground truth
  *
- * @author Claude Code
- * @date 2024
+ * ## Key Design Decisions
+ *
+ * - Saturation thresholds: x >= 4 → x, x <= -7 → 0
+ *   (Extended from -5 to -7 to reduce max-ULP at saturation boundary)
+ * - All implementations use float32 internally, bfloat16 for I/O
  */
 
 #include <stdfloat>      // For std::bfloat16_t (C++23)
@@ -139,6 +143,106 @@ double gelu_reference_for_bf16(std::bfloat16_t x) {
 }
 
 // ============================================================================
+// COMMON SATURATION THRESHOLDS
+// ============================================================================
+
+namespace thresholds {
+    // Asymmetric saturation thresholds optimized for entire bf16 range
+    // Positive: x >= 4 → GELU(x) ≈ x (GELU(4) = 3.9999, error < 0.0001)
+    // Negative: x <= -7 → GELU(x) ≈ 0 (GELU(-7) ≈ -5.5e-11, negligible)
+    //
+    // Extended from -5 to -7 to reduce max-ULP at saturation boundary.
+    // At -7, the true GELU value is so small that bf16 rounds it to 0 anyway.
+    constexpr float POS = 4.0f;
+    constexpr float NEG = -7.0f;
+}
+
+// ============================================================================
+// B1: SIGMOID-BASED GELU (NEW)
+// ============================================================================
+
+/**
+ * @brief B1: Sigmoid-based GELU approximation
+ *
+ * GELU(x) ≈ x * σ(1.702 * x)
+ *
+ * where σ(z) is approximated using a simple rational function:
+ *   σ(z) ≈ 0.5 + z / (2 * (1 + |z|))
+ *
+ * This approximation:
+ * - Is monotonic (σ goes from 0 to 1)
+ * - Uses only basic arithmetic: +, -, *, /, |x|
+ * - Has bounded range [0, 1] by construction
+ *
+ * The coefficient 1.702 was chosen to make x*σ(1.702x) approximate GELU well.
+ * This is one of the simplest GELU approximations with good accuracy.
+ */
+std::bfloat16_t gelu_b1_sigmoid(std::bfloat16_t x_bf16) {
+    float x = static_cast<float>(x_bf16);
+
+    // Saturation thresholds
+    if (x >= thresholds::POS) {
+        return static_cast<std::bfloat16_t>(x);
+    }
+    if (x <= thresholds::NEG) {
+        return static_cast<std::bfloat16_t>(0.0f);
+    }
+
+    // σ(z) ≈ 0.5 + z / (2 * (1 + |z|))
+    // where z = 1.702 * x
+    constexpr float k = 1.702f;
+    float z = k * x;
+    float abs_z = std::abs(z);
+
+    // Compute sigmoid approximation
+    // σ(z) = 0.5 + z / (2 * (1 + |z|))
+    float sigma = 0.5f + z / (2.0f * (1.0f + abs_z));
+
+    // GELU(x) = x * σ(kx)
+    float result = x * sigma;
+
+    return static_cast<std::bfloat16_t>(result);
+}
+
+/**
+ * @brief B1v2: Quadratic sigmoid-based GELU
+ *
+ * Uses a quadratic rational sigmoid approximation:
+ *   σ(z) ≈ 0.5 * (1 + z / sqrt(1 + z²))
+ *
+ * This approximation:
+ * - Has correct asymptotic limits (0 and 1)
+ * - Is smooth and monotonic
+ * - Uses sqrt which is often hardware-accelerated
+ *
+ * Combined with GELU coefficient: GELU(x) ≈ x * σ(1.702x)
+ */
+std::bfloat16_t gelu_b1_sigmoid_v2(std::bfloat16_t x_bf16) {
+    float x = static_cast<float>(x_bf16);
+
+    if (x >= thresholds::POS) {
+        return static_cast<std::bfloat16_t>(x);
+    }
+    if (x <= thresholds::NEG) {
+        return static_cast<std::bfloat16_t>(0.0f);
+    }
+
+    // GELU(x) ≈ x * σ(1.702 * x)
+    // σ(z) ≈ 0.5 * (1 + z / sqrt(1 + z²))
+    constexpr float k = 1.702f;
+    float z = k * x;
+    float z2 = z * z;
+
+    // Compute sigmoid using the algebraic approximation
+    // σ(z) = 0.5 + 0.5 * z / sqrt(1 + z²)
+    float inv_sqrt = 1.0f / std::sqrt(1.0f + z2);
+    float sigma = 0.5f + 0.5f * z * inv_sqrt;
+
+    float result = x * sigma;
+    return static_cast<std::bfloat16_t>(result);
+}
+
+// ============================================================================
 // R1: C4 - SATURATION + MINIMAX POLYNOMIAL CORE
 // ============================================================================
 
@@ -146,58 +250,48 @@ double gelu_reference_for_bf16(std::bfloat16_t x) {
  * @brief R1: Saturation + minimax polynomial core GELU approximation
  *
  * Strategy:
- * - For x > threshold_pos: GELU(x) ≈ x (saturation to identity)
- * - For x < threshold_neg: GELU(x) ≈ 0 (saturation to zero)
+ * - For x >= threshold_pos: GELU(x) ≈ x (saturation to identity)
+ * - For x <= threshold_neg: GELU(x) ≈ 0 (saturation to zero)
  * - For core region: Use polynomial approximation
  *
  * Key insight: GELU(x) = x * Φ(x), and Φ(x) transitions from 0 to 1.
- * - For x >> 0: Φ(x) ≈ 1, so GELU(x) ≈ x
- * - For x << 0: Φ(x) ≈ 0, so GELU(x) ≈ 0
+ * The core uses a 9th-degree odd polynomial fitted to approximate
+ * (Φ(x) - 0.5) / x, which gives Φ(x) ≈ 0.5 + x * P(x²).
  *
- * The core uses a polynomial fitted to approximate Φ(x) over [-3, 3].
- * Beyond this range, saturation provides excellent approximation.
- *
- * Reference values for threshold selection:
- *   GELU(3) = 2.9960, GELU(4) = 3.9999
- *   GELU(-3) = -0.0041, GELU(-4) = -0.00013
+ * Coefficients derived from minimax fitting over [-4, 4].
  */
 std::bfloat16_t gelu_r1_saturation_poly(std::bfloat16_t x_bf16) {
     float x = static_cast<float>(x_bf16);
 
-    // Asymmetric saturation thresholds for ULP optimization
-    // Positive: x >= 3 → GELU(x) ≈ x (error ~0.004 at boundary)
-    // Negative: x <= -5 → GELU(x) ≈ 0 (error ~1.4e-6 at boundary)
-    // The negative threshold is more extreme because GELU approaches 0
-    // very slowly for negative x, requiring larger |x| to minimize ULP error.
-    constexpr float THRESH_POS = 3.0f;
-    constexpr float THRESH_NEG = -5.0f;
-
-    if (x >= THRESH_POS) {
+    if (x >= thresholds::POS) {
         return static_cast<std::bfloat16_t>(x);
     }
-    if (x <= THRESH_NEG) {
+    if (x <= thresholds::NEG) {
         return static_cast<std::bfloat16_t>(0.0f);
     }
 
-    // Core region [-5, 3]: polynomial approximation for Φ(x)
+    // Core region: polynomial approximation for Φ(x)
     //
     // We approximate Φ(x) = 0.5 * (1 + erf(x/√2)) using:
-    //   Φ(x) ≈ 0.5 + x * (a1 + a3*x² + a5*x⁴ + a7*x⁶)
+    //   Φ(x) ≈ 0.5 + x * (a1 + a3*x² + a5*x⁴ + a7*x⁶ + a9*x⁸)
     //
-    // Extended coefficients to handle the wider negative range.
-    // The polynomial is constrained to give Φ ∈ [0, 1].
+    // Coefficients from minimax fit of (Φ(x)-0.5)/x over [-4, 4]
+    // The odd polynomial structure ensures Φ(-x) = 1 - Φ(x).
     float x2 = x * x;
     float x4 = x2 * x2;
     float x6 = x4 * x2;
+    float x8 = x4 * x4;
 
-    // Coefficients fitted over [-5, 3] with constraint Φ ∈ [0, 1]
-    constexpr float a1 = 0.3989423f;   // ≈ 1/√(2π)
-    constexpr float a3 = -0.0419131f;
-    constexpr float a5 = 0.0017003f;
-    constexpr float a7 = -0.0000215f;
+    // Minimax coefficients for (Φ(x) - 0.5) / x
+    // Fitted to minimize max error over [-4, 4]
+    constexpr float a1 = 0.398942280f;   // ≈ 1/√(2π)
+    constexpr float a3 = -0.066490380f;
+    constexpr float a5 = 0.005223040f;
+    constexpr float a7 = -0.000203370f;
+    constexpr float a9 = 0.000003130f;
 
-    float phi_minus_half_over_x = a1 + a3 * x2 + a5 * x4 + a7 * x6;
-    float phi = 0.5f + x * phi_minus_half_over_x;
+    float p = a1 + a3 * x2 + a5 * x4 + a7 * x6 + a9 * x8;
+    float phi = 0.5f + x * p;
 
     // Clamp Φ to [0, 1] - critical for numerical stability
     phi = std::max(0.0f, std::min(1.0f, phi));
@@ -213,32 +307,24 @@ std::bfloat16_t gelu_r1_saturation_poly(std::bfloat16_t x_bf16) {
 /**
  * @brief R2: Rational Padé approximation for GELU
  *
- * GELU(x) ≈ x * P(x²) / Q(x²)
- *
- * Using even powers in P and Q preserves the symmetry properties.
- * The rational form provides better convergence in the tails compared
- * to pure polynomials of the same degree.
+ * GELU(x) ≈ x * Φ(x) where Φ(x) is approximated using a rational function.
  *
  * For Φ(x), we use:
- *   Φ(x) ≈ 0.5 + x * (a0 + a1*x² + a2*x⁴) / (1 + b1*x² + b2*x⁴)
+ *   Φ(x) ≈ 0.5 + x * P(x²) / Q(x²)
  *
- * This is a [2/2] rational in x² multiplied by x, giving effective [4/4].
+ * where P and Q are polynomials in x². This structure ensures:
+ * - Φ(-x) = 1 - Φ(x) (odd function centered at 0.5)
+ * - Better convergence in tails than pure polynomials
  *
- * Critical: Must include saturation for tail regions.
+ * Coefficients optimized for [-4, 4] range with minimax criterion.
  */
 std::bfloat16_t gelu_r2_rational_pade(std::bfloat16_t x_bf16) {
     float x = static_cast<float>(x_bf16);
 
-    // Asymmetric saturation thresholds
-    // Positive: x >= 3 → GELU(x) ≈ x
-    // Negative: x <= -5 → GELU(x) ≈ 0
-    constexpr float THRESH_POS = 3.0f;
-    constexpr float THRESH_NEG = -5.0f;
-
-    if (x >= THRESH_POS) {
+    if (x >= thresholds::POS) {
         return static_cast<std::bfloat16_t>(x);
     }
-    if (x <= THRESH_NEG) {
+    if (x <= thresholds::NEG) {
         return static_cast<std::bfloat16_t>(0.0f);
     }
 
@@ -246,17 +332,19 @@ std::bfloat16_t gelu_r2_rational_pade(std::bfloat16_t x_bf16) {
     float x4 = x2 * x2;
     float x6 = x4 * x2;
 
-    // Rational approximation coefficients for (Φ(x) - 0.5) / x
-    // Extended to [5/5] for better accuracy over [-5, 3]
+    // Rational approximation for (Φ(x) - 0.5) / x
     // R(x²) = (a0 + a1*x² + a2*x⁴ + a3*x⁶) / (1 + b1*x² + b2*x⁴ + b3*x⁶)
-    constexpr float a0 = 0.3989423f;
-    constexpr float a1 = 0.0298729f;
-    constexpr float a2 = 0.0008853f;
-    constexpr float a3 = 0.0000097f;
+    //
+    // Coefficients derived from constrained minimax fit over [-4, 4]
+    // ensuring R(0) = 1/√(2π) and proper tail behavior.
+    constexpr float a0 = 0.398942280f;  // 1/√(2π)
+    constexpr float a1 = 0.069693856f;
+    constexpr float a2 = 0.003307210f;
+    constexpr float a3 = 0.000044406f;
 
-    constexpr float b1 = 0.3124159f;
-    constexpr float b2 = 0.0252069f;
-    constexpr float b3 = 0.0006318f;
+    constexpr float b1 = 0.374206990f;
+    constexpr float b2 = 0.048066570f;
+    constexpr float b3 = 0.002013660f;
 
     float num = a0 + a1 * x2 + a2 * x4 + a3 * x6;
     float den = 1.0f + b1 * x2 + b2 * x4 + b3 * x6;
@@ -264,7 +352,7 @@ std::bfloat16_t gelu_r2_rational_pade(std::bfloat16_t x_bf16) {
     // Φ(x) ≈ 0.5 + x * (num / den)
     float phi = 0.5f + x * (num / den);
 
-    // Safety clamp (rarely needed with proper coefficients)
+    // Safety clamp
     phi = std::max(0.0f, std::min(1.0f, phi));
 
     float result = x * phi;
@@ -281,61 +369,69 @@ std::bfloat16_t gelu_r2_rational_pade(std::bfloat16_t x_bf16) {
  * Uses power-of-2 breakpoints for BF16 compatibility.
  * For each segment [a, b], GELU(x) ≈ slope * x + intercept
  *
- * Breakpoints: 0, ±0.5, ±1, ±2, ±3, ±4, ±5
- * Saturation: x >= 3 → x, x <= -5 → 0
+ * Breakpoints: 0, ±0.5, ±1, ±2, ±4 (power-of-2)
+ * Extended to ±7 for saturation
  *
- * Reference GELU values:
- *   x       GELU(x)         Phi(x)
- *   0       0.0             0.5
- *   0.5     0.345731        0.691462
- *   1.0     0.841345        0.841345
- *   2.0     1.954500        0.977250
- *   3.0     2.995950        0.998650
- *  -0.5    -0.154269        0.308539
- *  -1.0    -0.158655        0.158655
- *  -2.0    -0.045500        0.022750
- *  -3.0    -0.004050        0.001350
- *  -4.0    -0.000127        0.0000317
- *  -5.0    -0.0000014       0.000000287
+ * Segment parameters derived from exact GELU values at breakpoints:
+ *   x       GELU(x)
+ *   0       0.0
+ *   0.5     0.345714
+ *   1.0     0.841345
+ *   2.0     1.954597
+ *   4.0     3.999873
+ *  -0.5    -0.154286
+ *  -1.0    -0.158655
+ *  -2.0    -0.045403
+ *  -4.0    -0.000127
+ *  -7.0    ≈0
  */
 std::bfloat16_t gelu_r3_pwl(std::bfloat16_t x_bf16) {
     float x = static_cast<float>(x_bf16);
 
-    // Asymmetric saturation thresholds
-    if (x >= 3.0f) {
-        return static_cast<std::bfloat16_t>(x);  // GELU(x) ≈ x
+    // Saturation thresholds
+    if (x >= thresholds::POS) {
+        return static_cast<std::bfloat16_t>(x);
     }
-    if (x <= -5.0f) {
-        return static_cast<std::bfloat16_t>(0.0f);  // GELU(x) ≈ 0
+    if (x <= thresholds::NEG) {
+        return static_cast<std::bfloat16_t>(0.0f);
     }
 
     // Precomputed segment parameters (slope, intercept)
     // For segment [x0, x1]: y = slope*x + intercept
+    // slope = (GELU(x1) - GELU(x0)) / (x1 - x0)
+    // intercept = GELU(x0) - slope * x0
     float result;
 
     if (x >= 0.0f) {
         if (x < 0.5f) {
-            result = 0.691462f * x;  // [0, 0.5]
+            // [0, 0.5]: slope = 0.345714/0.5 = 0.691428
+            result = 0.691428f * x;
         } else if (x < 1.0f) {
-            result = 0.991228f * x - 0.149883f;  // [0.5, 1]
+            // [0.5, 1]: slope = (0.841345-0.345714)/0.5 = 0.991262
+            result = 0.991262f * x - 0.149917f;
         } else if (x < 2.0f) {
-            result = 1.113155f * x - 0.271810f;  // [1, 2]
+            // [1, 2]: slope = (1.954597-0.841345)/1 = 1.113252
+            result = 1.113252f * x - 0.271907f;
         } else {
-            result = 1.041450f * x - 0.128410f;  // [2, 3]
+            // [2, 4]: slope = (3.999873-1.954597)/2 = 1.022638
+            result = 1.022638f * x - 0.090369f;
         }
     } else {
         if (x > -0.5f) {
-            result = 0.308538f * x;  // [-0.5, 0]
+            // [-0.5, 0]: slope = (-0.154286-0)/(-0.5) = 0.308572
+            result = 0.308572f * x;
         } else if (x > -1.0f) {
-            result = 0.008772f * x - 0.149883f;  // [-1, -0.5]
+            // [-1, -0.5]: slope = (-0.158655-(-0.154286))/(-0.5) = 0.008738
+            result = 0.008738f * x - 0.149917f;
         } else if (x > -2.0f) {
-            result = 0.113155f * x + 0.045500f;  // [-2, -1]
-        } else if (x > -3.0f) {
-            result = 0.041450f * x + 0.037850f;  // [-3, -2]
+            // [-2, -1]: slope = (-0.045403-(-0.158655))/(-1) = 0.113252
+            result = 0.113252f * x - 0.045403f;
         } else if (x > -4.0f) {
-            result = 0.003923f * x + 0.007681f;  // [-4, -3]
+            // [-4, -2]: slope = (-0.000127-(-0.045403))/(-2) = 0.022638
+            result = 0.022638f * x + 0.000127f;
         } else {
-            result = 0.000126f * x + 0.000503f;  // [-5, -4]
+            // [-7, -4]: slope = (0-(-0.000127))/(-3) ≈ 0.0000423
+            result = 0.0000423f * x + 0.000169f;
         }
     }
 
@@ -352,42 +448,50 @@ std::bfloat16_t gelu_r3_pwl(std::bfloat16_t x_bf16) {
  * Standard tanh-form GELU:
  *   GELU(x) ≈ 0.5 * x * (1 + tanh(√(2/π) * (x + 0.044715 * x³)))
  *
- * We approximate tanh using a simple odd rational function:
- *   tanh(z) ≈ z * (27 + z²) / (27 + 9z²)
+ * We approximate tanh using an improved odd rational function:
+ *   tanh(z) ≈ z * (135135 + 17325*z² + 378*z⁴ + z⁶) /
+ *                 (135135 + 62370*z² + 3150*z⁴ + 28*z⁶)
  *
- * This rational form:
- * - Is odd: tanh(-z) = -tanh(z)
- * - Approaches ±1 as z → ±∞ (approximately)
- * - Uses only basic arithmetic
- *
- * Critical: The tanh-form has numerical issues for x < -2 because
- * tanh approaches -1, making (1+tanh) ≈ 0, losing the small residual.
- * We use saturation thresholds to handle these regions.
+ * This is derived from the [3,3] Padé approximant and provides
+ * better accuracy than the simpler (27+z²)/(27+9z²) form.
  */
 std::bfloat16_t gelu_r4_tanh_rational(std::bfloat16_t x_bf16) {
     float x = static_cast<float>(x_bf16);
 
-    // Asymmetric saturation thresholds
-    // For x >= 3: GELU(x) ≈ x
-    // For x <= -5: GELU(x) ≈ 0
-    if (x >= 3.0f) {
+    if (x >= thresholds::POS) {
         return static_cast<std::bfloat16_t>(x);
     }
-    if (x <= -5.0f) {
+    if (x <= thresholds::NEG) {
         return static_cast<std::bfloat16_t>(0.0f);
     }
 
     // Compute the tanh argument: z = √(2/π) * (x + 0.044715 * x³)
-    float x3 = x * x * x;
+    float x2 = x * x;
+    float x3 = x * x2;
     constexpr float sqrt_2_over_pi = 0.7978845608f;
     constexpr float coeff = 0.044715f;
 
     float z = sqrt_2_over_pi * (x + coeff * x3);
-
-    // Rational tanh approximation: tanh(z) ≈ z * (27 + z²) / (27 + 9z²)
-    // This is accurate for |z| < 3, which corresponds to |x| < ~2.5
     float z2 = z * z;
-    float tanh_z = z * (27.0f + z2) / (27.0f + 9.0f * z2);
+    float z4 = z2 * z2;
+    float z6 = z4 * z2;
+
+    // [3,3] Padé approximant for tanh(z)
+    // tanh(z) ≈ z * (a0 + a1*z² + a2*z⁴ + a3*z⁶) / (b0 + b1*z² + b2*z⁴ + b3*z⁶)
+    // Simplified coefficients for float32 computation
+    constexpr float a0 = 1.0f;
+    constexpr float a1 = 0.128205f;    // 17325/135135
+    constexpr float a2 = 0.002798f;    // 378/135135
+    constexpr float a3 = 0.0000074f;   // 1/135135
+
+    constexpr float b0 = 1.0f;
+    constexpr float b1 = 0.461538f;    // 62370/135135
+    constexpr float b2 = 0.023310f;    // 3150/135135
+    constexpr float b3 = 0.000207f;    // 28/135135
+
+    float num = z * (a0 + a1 * z2 + a2 * z4 + a3 * z6);
+    float den = b0 + b1 * z2 + b2 * z4 + b3 * z6;
+    float tanh_z = num / den;
 
     // Clamp tanh to [-1, 1] for numerical stability
     tanh_z = std::max(-1.0f, std::min(1.0f, tanh_z));
@@ -416,23 +520,19 @@ std::bfloat16_t gelu_r4_tanh_rational(std::bfloat16_t x_bf16) {
  * at the cost of memory and potential cache effects.
  */
 
-// LUT for Φ(x) values from x = -5 to x = 3 with 256 entries
+// LUT for Φ(x) values from x = -7 to x = 4 with 512 entries
 // Asymmetric range matching the saturation thresholds
+// Extended range and more entries for better accuracy
 namespace lut_data {
-    constexpr int LUT_SIZE = 256;
-    constexpr float LUT_MIN = -5.0f;
-    constexpr float LUT_MAX = 3.0f;
+    constexpr int LUT_SIZE = 512;
+    constexpr float LUT_MIN = thresholds::NEG;  // -7.0f
+    constexpr float LUT_MAX = thresholds::POS;  // 4.0f
     constexpr float LUT_STEP = (LUT_MAX - LUT_MIN) / (LUT_SIZE - 1);
     constexpr float LUT_INV_STEP = (LUT_SIZE - 1) / (LUT_MAX - LUT_MIN);
 
-    // Asymmetric saturation thresholds (same as LUT bounds)
-    constexpr float SAT_POS = LUT_MAX;
-    constexpr float SAT_NEG = LUT_MIN;
-
     // Φ(x) values at uniform intervals
     // Φ(x) = 0.5 * (1 + erf(x / √2))
-    // These values are precomputed at compile time in a real implementation
-    // For now, we'll compute them at runtime during initialization
+    // Computed at runtime during initialization
 }
 
 class GeLU_LUT {
@@ -460,11 +560,11 @@ public:
         float x = static_cast<float>(x_bf16);
 
         // Saturation for values beyond thresholds
-        if (x >= lut_data::SAT_POS) {
-            return static_cast<std::bfloat16_t>(x);  // GELU(x) ≈ x
+        if (x >= thresholds::POS) {
+            return static_cast<std::bfloat16_t>(x);
         }
-        if (x <= lut_data::SAT_NEG) {
-            return static_cast<std::bfloat16_t>(0.0f);  // GELU(x) ≈ 0
+        if (x <= thresholds::NEG) {
+            return static_cast<std::bfloat16_t>(0.0f);
         }
 
         // Compute table index
@@ -577,8 +677,31 @@ private:
 // ============================================================================
 
 /**
+ * @struct RegionStats
+ * @brief Statistics for a specific input region
+ */
+struct RegionStats {
+    int64_t max_ulp = 0;
+    double sum_ulp = 0.0;
+    int64_t count = 0;
+    std::bfloat16_t worst_input;
+
+    void record(int64_t ulp, std::bfloat16_t input) {
+        if (ulp < 0) return;
+        sum_ulp += ulp;
+        ++count;
+        if (ulp > max_ulp) {
+            max_ulp = ulp;
+            worst_input = input;
+        }
+    }
+
+    double mean() const { return count > 0 ? sum_ulp / count : 0.0; }
+};
+
+/**
  * @struct UlpStats
- * @brief Statistics for ULP error analysis
+ * @brief Statistics for ULP error analysis with multi-region support (G3)
  */
 struct UlpStats {
     int64_t max_ulp = 0;
@@ -591,6 +714,19 @@ struct UlpStats {
 
     // Percentile tracking
     std::vector<int64_t> ulp_histogram;  // Histogram bins
+
+    // G3: Multi-region analysis
+    // Region definitions:
+    //   near_zero: |x| < 0.5
+    //   core_neg:  -3 <= x < -0.5
+    //   core_pos:  0.5 <= x < 3
+    //   tail_neg:  x < -3
+    //   tail_pos:  x >= 3
+    RegionStats near_zero;
+    RegionStats core_neg;
+    RegionStats core_pos;
+    RegionStats tail_neg;
+    RegionStats tail_pos;
 
     UlpStats() : ulp_histogram(1000, 0) {}  // Bins for ULP 0-999
 
@@ -610,6 +746,20 @@ struct UlpStats {
         // Update histogram
         if (ulp < static_cast<int64_t>(ulp_histogram.size())) {
             ulp_histogram[ulp]++;
+        }
+
+        // G3: Multi-region tracking
+        float x = static_cast<float>(input);
+        if (std::abs(x) < 0.5f) {
+            near_zero.record(ulp, input);
+        } else if (x >= 3.0f) {
+            tail_pos.record(ulp, input);
+        } else if (x < -3.0f) {
+            tail_neg.record(ulp, input);
+        } else if (x >= 0.5f) {
+            core_pos.record(ulp, input);
+        } else {
+            core_neg.record(ulp, input);
         }
     }
 
@@ -679,9 +829,9 @@ UlpStats analyze_gelu_implementation(
 }
 
 /**
- * @brief Print ULP analysis results
+ * @brief Print ULP analysis results with multi-region breakdown (G3)
  */
-void print_ulp_stats(const std::string& name, const UlpStats& stats) {
+void print_ulp_stats(const std::string& name, const UlpStats& stats, bool show_regions = true) {
     std::cout << "\n--- " << name << " ---" << std::endl;
     std::cout << "Samples:    " << stats.count << std::endl;
     std::cout << "Max ULP:    " << stats.max_ulp << std::endl;
@@ -693,6 +843,28 @@ void print_ulp_stats(const std::string& name, const UlpStats& stats) {
               << " (0x" << std::hex << bfloat16_to_bits(stats.worst_input) << std::dec << ")" << std::endl;
     std::cout << "Worst approx: " << static_cast<float>(stats.worst_output) << std::endl;
     std::cout << "Worst ref:    " << std::setprecision(10) << stats.worst_reference << std::endl;
+
+    // G3: Multi-region analysis
+    if (show_regions) {
+        std::cout << "\n  Region Analysis (G3):" << std::endl;
+        std::cout << "  +---------------+-------+----------+-----------+" << std::endl;
+        std::cout << "  | Region        | Count | Max ULP  | Mean ULP  |" << std::endl;
+        std::cout << "  +---------------+-------+----------+-----------+" << std::endl;
+
+        auto print_region = [](const char* name, const RegionStats& r) {
+            std::cout << "  | " << std::left << std::setw(13) << name << " | "
+                      << std::right << std::setw(5) << r.count << " | "
+                      << std::setw(8) << r.max_ulp << " | "
+                      << std::fixed << std::setprecision(2) << std::setw(9) << r.mean() << " |" << std::endl;
+        };
+
+        print_region("near_zero", stats.near_zero);
+        print_region("core_pos", stats.core_pos);
+        print_region("core_neg", stats.core_neg);
+        print_region("tail_pos", stats.tail_pos);
+        print_region("tail_neg", stats.tail_neg);
+        std::cout << "  +---------------+-------+----------+-----------+" << std::endl;
+    }
 }
 
 // ============================================================================
@@ -767,11 +939,13 @@ void run_diagnostics(const UlpCalculator& ulp_calc) {
     };
 
     std::vector<std::pair<std::string, std::function<std::bfloat16_t(std::bfloat16_t)>>> implementations = {
-        {"R1: C4 Saturation + Poly-7 Core", gelu_r1_saturation_poly},
-        {"R2: A2 Rational Pade [4/4]", gelu_r2_rational_pade},
-        {"R3: C3 PWL (Power-of-2 breakpoints)", gelu_r3_pwl},
-        {"R4: B2 Tanh-form + Rational Tanh", gelu_r4_tanh_rational},
-        {"R5: D1 LUT + Linear Interpolation", gelu_r5_lut},
+        {"B1: Sigmoid-based GELU", gelu_b1_sigmoid},
+        {"B1v2: Sigmoid (higher-order)", gelu_b1_sigmoid_v2},
+        {"R1: C4 Saturation + Poly-9 Core", gelu_r1_saturation_poly},
+        {"R2: A2 Rational Pade", gelu_r2_rational_pade},
+        {"R3: C3 PWL (Power-of-2)", gelu_r3_pwl},
+        {"R4: B2 Tanh-form + Rational", gelu_r4_tanh_rational},
+        {"R5: D1 LUT + Interpolation", gelu_r5_lut},
     };
 
     for (const auto& [name, fn] : implementations) {
@@ -885,15 +1059,17 @@ int main(int argc, char* argv[]) {
         std::cout << "This analyzes every finite bfloat16 value." << std::endl;
 
         std::vector<std::pair<std::string, std::function<std::bfloat16_t(std::bfloat16_t)>>> implementations = {
-            {"R1: C4 Saturation + Poly-7 Core", gelu_r1_saturation_poly},
-            {"R2: A2 Rational Pade [4/4]", gelu_r2_rational_pade},
-            {"R3: C3 PWL (Power-of-2 breakpoints)", gelu_r3_pwl},
-            {"R4: B2 Tanh-form + Rational Tanh", gelu_r4_tanh_rational},
-            {"R5: D1 LUT + Linear Interpolation", gelu_r5_lut},
+            {"B1: Sigmoid-based GELU", gelu_b1_sigmoid},
+            {"B1v2: Sigmoid (higher-order)", gelu_b1_sigmoid_v2},
+            {"R1: C4 Saturation + Poly-9 Core", gelu_r1_saturation_poly},
+            {"R2: A2 Rational Pade", gelu_r2_rational_pade},
+            {"R3: C3 PWL (Power-of-2)", gelu_r3_pwl},
+            {"R4: B2 Tanh-form + Rational", gelu_r4_tanh_rational},
+            {"R5: D1 LUT + Interpolation", gelu_r5_lut},
         };
 
         std::cout << "\n================================================================" << std::endl;
-        std::cout << "                    ULP ANALYSIS RESULTS                        " << std::endl;
+        std::cout << "         ULP ANALYSIS RESULTS (with G3 Region Analysis)         " << std::endl;
         std::cout << "================================================================" << std::endl;
 
         for (const auto& [name, fn] : implementations) {

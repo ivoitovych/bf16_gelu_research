@@ -205,3 +205,106 @@ Current max-ULP values (~13760-15760) are NOT due to approximation quality in th
 1. Implement B1 (sigmoid-based GELU)
 2. Add G3 multi-region analysis (near-zero, core, tails)
 3. Consider extending saturation threshold
+
+---
+
+## Session 3: Implementation Improvements
+
+### Objectives Completed
+All gaps identified in Session 2 have been addressed:
+1. ✓ Extended saturation threshold from -5 to -7
+2. ✓ Implemented B1 sigmoid-based GELU (two variants)
+3. ✓ Improved coefficients for R1, R2, R4
+4. ✓ Optimized R3 PWL segments
+5. ✓ Added G3 multi-region error analysis
+
+### Key Changes
+
+**Saturation Thresholds Extended:**
+- Positive: 3 → 4 (GELU(4) = 3.9999)
+- Negative: -5 → -7 (GELU(-7) ≈ -5.5e-11)
+- Consolidated into `namespace thresholds` for consistency
+
+**New B1 Sigmoid-Based Implementations:**
+```cpp
+// B1: Simple rational sigmoid
+σ(z) ≈ 0.5 + z / (2(1 + |z|))
+GELU(x) ≈ x · σ(1.702x)
+
+// B1v2: Quadratic sigmoid (uses sqrt)
+σ(z) ≈ 0.5 + 0.5·z / √(1 + z²)
+GELU(x) ≈ x · σ(1.702x)
+```
+
+**R1 Polynomial Improvements:**
+- Extended from 7th to 9th degree
+- Minimax-style coefficients over [-4, 4]
+- Uses Horner-like evaluation: a1 + a3·x² + a5·x⁴ + a7·x⁶ + a9·x⁸
+
+**R2 Rational Improvements:**
+- Better [3/3] Padé coefficients in x²
+- Optimized for [-4, 4] range
+
+**R4 Tanh Improvements:**
+- Upgraded from simple (27+z²)/(27+9z²) to [3,3] Padé approximant
+- Coefficients derived from tanh Taylor expansion
+
+**R5 LUT Improvements:**
+- Increased from 256 to 512 entries
+- Extended range from [-5, 3] to [-7, 4]
+
+**G3 Multi-Region Analysis:**
+Added `RegionStats` structure tracking ULP errors for:
+- near_zero: |x| < 0.5
+- core_pos: 0.5 ≤ x < 3
+- core_neg: -3 ≤ x < -0.5
+- tail_pos: x ≥ 3
+- tail_neg: x < -3
+
+### Results Comparison
+
+**Before (Session 1-2):**
+| Method | Max ULP | Mean ULP |
+|--------|---------|----------|
+| R1 | 15760 | 36.0 |
+| R2 | 13760 | 21.8 |
+| R3 | 13760 | 55.7 |
+| R4 | 15351 | 44.1 |
+| R5 | 13760 | 18.7 |
+
+**After (Session 3):**
+| Method | Max ULP | Mean ULP | Improvement |
+|--------|---------|----------|-------------|
+| B1v2 | 11550 | 11.35 | NEW - Best mean |
+| B1 | 11550 | 12.51 | NEW |
+| R2 | 11550 | 12.44 | ↓16% max, ↓43% mean |
+| R5 | 13215 | 15.02 | ↓4% max, ↓20% mean |
+| R1 | 13466 | 20.18 | ↓15% max, ↓44% mean |
+| R4 | 14850 | 30.98 | ↓3% max, ↓30% mean |
+| R3 | 11550 | 45.41 | ↓16% max, ↓18% mean |
+
+### Key Insights
+
+**Max-ULP is fundamentally limited by saturation:**
+- Even extending to -7, the max-ULP is ~11550
+- At x=-7, GELU(-7)≈-5.5e-11 which in bf16 is a tiny subnormal
+- Returning 0 instead of this tiny value creates the ULP gap
+- Further extension would have diminishing returns
+
+**B1v2 achieves best overall mean ULP:**
+- Simple formula with sqrt (hardware-accelerated)
+- Mean 11.35 ULP, better than R2's 12.44
+
+**R5 (LUT) still best for core accuracy:**
+- 0.00-0.03 mean ULP in core regions
+- But higher tail_neg error (60.57) due to saturation boundary
+
+**Region analysis reveals error distribution:**
+- tail_neg dominates max-ULP for all methods
+- near_zero and tail_pos have excellent accuracy
+- core_neg (around x=-1 to -3) is challenging
+
+### Files Modified
+- `gelu_implementations.cpp`: All implementation updates
+- `CLAUDE.md`: Updated results and status
+- `HISTORY.md`: This session documentation
