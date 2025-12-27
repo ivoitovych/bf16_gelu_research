@@ -797,3 +797,120 @@ The B3 piecewise erf approximation (Taylor + A-S rational) emerged as the univer
 ### Project Complete
 
 All 22 methods now have Max ULP ≤ 1547 (A1 Poly-7). Eight methods achieve the theoretical best of Max ULP = 145 (the bf16 underflow limit at x ≈ -8.3125).
+
+---
+
+## Session 9: Comprehensive Gap Analysis Review
+
+### Objective
+Complete review of FinalLists.md taxonomy (40 methods across 8 categories) against actual implementations to identify remaining gaps.
+
+### Methodology
+1. Read entire FinalLists.md (4 consolidated strategy lists, 1011 lines)
+2. Grep all function signatures in gelu_implementations.cpp
+3. Map each taxonomy item to implementation status
+4. Categorize gaps by priority
+
+### Coverage Summary
+
+**Overall: 35/40 methods implemented (87.5%)**
+
+| Category | Total | Implemented | Coverage |
+|----------|-------|-------------|----------|
+| A: Direct GELU | 4 | 4 | 100% |
+| B: Sub-function | 4 | 4 | 100% |
+| C: Piecewise | 5 | 4 | 80% |
+| D: Hybrid/LUT | 4 | 4 | 100% |
+| E: BF16 Knobs | 8 | 5 | 62.5% |
+| F: Reference | 4 | 4 | 100% |
+| G: Methodology | 8 | 8 | 100% |
+| H: Advanced | 3 | 2 | 67% |
+
+### Detailed Implementation Mapping
+
+**Category A: Direct GELU Approximations (4/4)**
+- A1: `gelu_a1_poly7`, `gelu_a1_poly9` (deg-5 not needed, 7/9 sufficient)
+- A2: `gelu_r2_rational_pade` ([4/4] order, [3/3] and [5/5] not needed)
+- A3: `gelu_a3_chebyshev` (12-term Clenshaw)
+- A4: `gelu_a4_continued_fraction` (depth-4)
+
+**Category B: Sub-function Approximations (4/4)**
+- B1: `gelu_b1_sigmoid`, `gelu_b1_sigmoid_v2` (simple + quadratic)
+- B2: `gelu_r4_tanh_rational` ([3,3] Padé tanh)
+- B3: `gelu_b3_erf_poly` (Taylor + A-S piecewise)
+- B4: `gelu_b4_rational_erf` (range-reduced [4/4])
+
+**Category C: Piecewise Methods (4/5)**
+- C1: `gelu_c1_cubic_spline` (9-segment Hermite)
+- C2: `gelu_c2_piecewise_rational` (5-segment)
+- C3: `gelu_r3_pwl` (power-of-2 breakpoints)
+- C4: `gelu_r1_saturation_poly` (saturation + poly-9)
+- C5: ❌ EPSS not implemented (optimization technique)
+
+**Category D: Hybrid & LUT-Based (4/4)**
+- D1: `gelu_r5_lut` (512 entries + extended tail)
+- D2: `gelu_d2_lut_poly_hybrid` (LUT tails + B3 erf)
+- D3: `gelu_d3_lut_correction` (32-entry + correction)
+- D4: `gelu_d4_nonuniform_lut` (23 breakpoints + Taylor)
+
+**Category E: BF16-Specific Optimizations (5/8)**
+- E1: ✓ Integrated (bounds clamping in all methods)
+- E2: ✓ `--quantization` flag
+- E3: ❌ Range-scaled approximation not implemented
+- E4: ✓ Integrated (power-of-2 breakpoints in R3)
+- E5: ❌ Denormal policy testing not implemented
+- E6: ✓ `--fma` flag
+- E7: ✓ `--sensitivity` flag
+- E8: ❌ FTZ policy testing not implemented
+
+**Category F: Reference & Ground-Truth (4/4)**
+- F1: `gelu_reference_f64` (float64 with std::erf)
+- F2: `gelu_f2_quadrature` (Gauss-Legendre + B3 fallback)
+- F3: `gelu_f3_cf_erf` (Lentz CF + B3 fallback)
+- F4: ✓ Covered by B3 (A-S coefficients)
+
+**Category G: Methodology & Evaluation (8/8)**
+- G1: `UlpCalculator` class (65280 values)
+- G2: `--fma` comparison (Horner vs Estrin)
+- G3: `RegionStats` (5 regions per method)
+- G4: `gelu_derivative`, `--derivative` flag
+- G5: `--cost-model` (ops count)
+- G6: `--sensitivity` (coefficient robustness)
+- G7: `--cost-model` (vectorization analysis)
+- G8: `--regression` (50 adversarial points)
+
+**Category H: Advanced & Research (2/3)**
+- H1: `gelu_inverse` (Newton-Raphson)
+- H2: ❌ GELU-Softmax unit not implemented (hardware-specific)
+- H3: `gelu_h3_softex` (Padé exp)
+
+### Remaining Gaps Analysis
+
+| ID | Gap | Priority | Justification |
+|----|-----|----------|---------------|
+| **C5** | EPSS knot refinement | Low | Optimization technique, not approximation method. Current knots are manually optimized and achieve 145 max ULP. |
+| **E3** | Range-scaled approximation | Low | Theoretical benefit. Current methods already handle BF16 range well via tail LUT. |
+| **E5** | Denormal policy testing | Medium | Would verify behavior for |x| < 5.88×10⁻³⁹. Not critical since our range is [-8.3125, 3]. |
+| **E8** | FTZ policy testing | Medium | Same as E5. Flush-to-zero behavior is implicit in current tail handling. |
+| **H2** | GELU-Softmax unit | Low | Hardware-specific optimization for shared multiplier/adder. Out of scope for ULP analysis project. |
+
+### Conclusions
+
+1. **Core approximations complete**: All 16 approximation methods (A1-A4, B1-B4, C1-C4, D1-D4) are implemented
+2. **Methodology complete**: All 8 evaluation methods (G1-G8) are implemented
+3. **BF16 knobs partial**: 5/8 implemented, remaining 3 are edge-case testing
+4. **Advanced partial**: 2/3 implemented, missing one is hardware-specific
+
+### Recommendation
+
+The 5 remaining gaps are intentionally deprioritized:
+- C5, E3: Optimization techniques with marginal benefit given current results
+- E5, E8: Edge-case testing for denormals (not critical for [-8.3125, 3] range)
+- H2: Hardware-specific, out of scope
+
+**Project is functionally complete for ULP analysis purposes.**
+
+### Files Modified
+- `README.md`: Updated implementation coverage table and gaps section
+- `CLAUDE.md`: Updated status table with 35/40 coverage
+- `HISTORY.md`: This session documentation
