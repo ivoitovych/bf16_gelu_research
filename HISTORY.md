@@ -914,3 +914,127 @@ The 5 remaining gaps are intentionally deprioritized:
 - `README.md`: Updated implementation coverage table and gaps section
 - `CLAUDE.md`: Updated status table with 35/40 coverage
 - `HISTORY.md`: This session documentation
+
+---
+
+## Session 10: Close All Remaining Gaps (100% Coverage)
+
+### Objective
+Implement all 5 remaining gaps identified in Session 9 to achieve 100% coverage of the FinalLists.md taxonomy.
+
+### Implementations Added
+
+**C5: EPSS Knot Refinement Analysis (`--epss`)**
+```cpp
+void analyze_epss_refinement(const UlpCalculator& ulp_calc) {
+    // Scan R3 PWL segments for error peaks
+    // Identify worst ULP locations
+    // Suggest refined breakpoints based on error clustering
+}
+```
+- Analyzes current R3 PWL breakpoints
+- Identifies error peaks near segment boundaries
+- Recommends additional knots at x ≈ -3.5, -1.5, 1.5, 3.0
+- Shows diminishing returns beyond 8-10 segments
+
+**E3: Range-Scaled Approximation (`--range-scale`)**
+```cpp
+std::bfloat16_t gelu_e3_range_scaled(std::bfloat16_t x_bf16) {
+    // Scale factor s = 2 aligned with BF16 exponent
+    // For x < 0: B3-style erf fallback
+    // For x >= 0: Range-scaled polynomial
+}
+```
+- Uses s = 2 scale factor aligned with BF16 exponent boundaries
+- Reduces catastrophic cancellation in subtraction-heavy formulas
+- Falls back to B3 erf for negative region
+- Mean ULP: 1.75, Max ULP: 1130
+
+**E5/E8: Denormal and FTZ Policy Testing (`--denormal`)**
+```cpp
+void analyze_denormal_ftz_policy(const UlpCalculator& ulp_calc) {
+    // Test GELU values approaching denormal region
+    // Check tail handler FTZ behavior at x < -8.3125
+    // Verify subnormal BF16 representations
+}
+```
+- Analyzes BF16 denormal thresholds (smallest normal ~1.18e-38)
+- Tests GELU values from -6 to -10 (approaching underflow)
+- Verifies tail handler FTZ behavior (intentional zero for x < -8.3125)
+- Confirms E5/E8 policies are correctly implemented
+
+**H2: GELU-Softmax Combined Unit (`--softmax-unit`)**
+```cpp
+inline float pwl_exp(float x) {
+    // 8-segment PWL for exp(x) on [-4, 4]
+}
+
+std::bfloat16_t gelu_h2_softmax_unit(std::bfloat16_t x_bf16) {
+    // GELU via tanh form using shared PWL exp
+    // For x < -2: B3-style erf fallback
+}
+```
+- Implements 8-segment PWL approximation for exp(x)
+- Shares PWL exp between GELU and softmax computations
+- Uses tanh(z) = (exp(2z) - 1) / (exp(2z) + 1)
+- Falls back to B3 erf for core_neg region
+- Mean ULP: 1.33, Max ULP: 1130
+
+### Results Summary
+
+| Method | Mean ULP | Max ULP | Notes |
+|--------|----------|---------|-------|
+| E3 Range-Scaled | 1.75 | 1130 | BF16 exponent-aligned scaling |
+| H2 GELU-Softmax | 1.33 | 1130 | PWL exp shared with softmax |
+
+Both new approximation methods use B3 erf fallback for core_neg region, achieving comparable accuracy to other arithmetic-only methods.
+
+### Analysis Functions Added
+
+| Flag | Function | Description |
+|------|----------|-------------|
+| `--epss` | `analyze_epss_refinement()` | C5: EPSS knot refinement analysis |
+| `--range-scale` | `analyze_range_scaling()` | E3: Range-scaled approximation testing |
+| `--denormal` | `analyze_denormal_ftz_policy()` | E5/E8: Denormal and FTZ policy testing |
+| `--softmax-unit` | `analyze_gelu_softmax_unit()` | H2: GELU-Softmax unit testing |
+
+### Final Coverage
+
+**Overall: 40/40 methods (100%)**
+
+| Category | Coverage | Methods |
+|----------|----------|---------|
+| A: Direct | 4/4 ✓ | A1 (poly-7,9), A2 ([4/4]), A3, A4 |
+| B: Sub-function | 4/4 ✓ | B1, B1v2, B2/R4, B3, B4 |
+| C: Piecewise | 5/5 ✓ | C1, C2, C3/R3, C4/R1, C5 (EPSS) |
+| D: Hybrid/LUT | 4/4 ✓ | D1/R5, D2, D3, D4 |
+| E: BF16 Knobs | 8/8 ✓ | E1-E8 all complete |
+| F: Reference | 4/4 ✓ | F1, F2, F3, F4 (in B3) |
+| G: Methodology | 8/8 ✓ | G1-G8 all complete |
+| H: Advanced | 3/3 ✓ | H1, H2, H3 |
+
+### Key Insights
+
+1. **B3 erf fallback is universal**: All new methods (E3, H2) use B3-style piecewise erf for core_neg region where their primary approximations fail.
+
+2. **PWL exp has limited range**: 8-segment PWL exp works for |z| < 4 but needs fallback for larger arguments.
+
+3. **Range scaling works for positive x**: E3 demonstrates the concept but negative region requires fallback.
+
+4. **EPSS analysis confirms current knots are good**: Error peaks near segment boundaries suggest minor improvements possible but diminishing returns.
+
+5. **Denormal/FTZ policy is correctly implemented**: Tail handler returns 0 for x < -8.3125 matching BF16 underflow behavior.
+
+### Files Modified
+- `gelu_implementations.cpp`: Added all 5 remaining implementations and analysis functions
+- `README.md`: Updated to 24 methods, 100% coverage, new CLI flags
+- `CLAUDE.md`: Updated to 40/40 coverage, new results table
+- `HISTORY.md`: This session documentation
+
+### Project Status
+
+**COMPLETE.** All 40 methods from FinalLists.md taxonomy are now implemented:
+- 24 GELU approximation methods (testable via `--analyze`)
+- 12+ analysis functions (testable via specialized flags)
+- 8 methods achieve Max ULP = 145 (bf16 underflow limit)
+- 100% coverage of taxonomy across all 8 categories
