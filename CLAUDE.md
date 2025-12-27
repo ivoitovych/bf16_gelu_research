@@ -59,12 +59,12 @@ g++ -std=c++23 -O2 -o ulp_calculator ulp_calculator.cpp
 | 1 | A1 | Direct polynomial (7th/9th degree) | ✓ Complete |
 | 1 | B1 | Sigmoid-based: x·σ(1.702x) | ✓ Complete |
 | 1 | B1v2 | Quadratic sigmoid variant | ✓ Complete |
-| 1 | B3 | Erf polynomial (piecewise A-S) | ✓ **Best performer** (0.61 mean ULP) |
-| 2 | C1 | Cubic spline (9 segments + Fritsch-Carlson) | ✓ **Best performer** (0.60 mean ULP) |
-| 1 | R1/C4 | Saturation + poly-9 core | ✓ Improved coefficients |
-| 1 | R2/A2 | Rational Padé | ✓ Improved coefficients |
-| 1 | R3/C3 | Piecewise linear (ISPA) | ✓ Optimized segments |
-| 1 | R4/B2 | Tanh-form + [3,3] Padé tanh | ✓ **Best performer** (0.61 mean ULP) |
+| 1 | B3 | Erf polynomial (piecewise A-S) | ✓ **Best performer** (0.13 mean, 145 max ULP) |
+| 2 | C1 | Cubic spline (9 segments + Fritsch-Carlson) | ✓ **Best performer** (0.13 mean, 145 max ULP) |
+| 1 | R1/C4 | Saturation + poly-9 core | ✓ Complete |
+| 1 | R2/A2 | Rational Padé | ✓ Complete |
+| 1 | R3/C3 | Piecewise linear (ISPA) | ✓ Complete |
+| 1 | R4/B2 | Tanh-form + [3,3] Padé tanh | ✓ Excellent (0.14 mean, 166 max ULP) |
 | 1 | R5/D1 | LUT (512 entries) + interpolation | ✓ Complete |
 | 4 | G4 | Backward pass (GELU' derivative) | ✓ Complete |
 | 4 | G7/G8 | Regression suite (adversarial points) | ✓ Complete |
@@ -93,20 +93,20 @@ g++ -std=c++23 -O2 -o ulp_calculator ulp_calculator.cpp
 
 | Method | Max ULP | Mean ULP | P99 | Notes |
 |--------|---------|----------|-----|-------|
-| **C1 Cubic Spline** | 9904 | **0.60** | 0 | **Best mean ULP** - 9-seg Hermite + Taylor near-zero |
-| **B3 Erf Polynomial** | 9904 | **0.61** | 0 | Piecewise erf (Taylor + rational) |
-| **R4 Tanh** | 9904 | **0.61** | 0 | Tanh-form + [3,3] Padé |
-| R2 Rational | 9904 | 1.69 | **2** | **Best P99** - rational Padé |
-| R1 Poly-9 | 9904 | 1.90 | 1 | Polynomial core |
-| B1v2 Sigmoid | 9904 | 1.97 | 38 | Quadratic sigmoid |
-| B1 Sigmoid | 9904 | 2.14 | 19 | Simple sigmoid |
-| A1 Direct Poly | 9904 | 4.06-4.08 | 42 | Direct polynomial (7th/9th degree) |
-| R5 LUT | 13215 | 15.02 | 0 | LUT (needs tail handler update) |
-| R3 PWL | 9904 | 37.32 | 98 | High near-zero error |
+| **C1 Cubic Spline** | **145** | **0.13** | 0 | **Best overall** - 9-seg Hermite + Taylor near-zero |
+| **B3 Erf Polynomial** | **145** | **0.13** | 0 | Piecewise erf (Taylor + rational) |
+| **R4 Tanh** | 166 | 0.14 | 0 | Tanh-form + [3,3] Padé |
+| B1v2 Sigmoid | 625 | 1.50 | 34 | Quadratic sigmoid |
+| R3 PWL | 832 | 36.85 | 98 | High near-zero error |
+| B1 Sigmoid | 1068 | 1.67 | 18 | Simple sigmoid |
+| R2 Rational | 1139 | 1.22 | 3 | Rational Padé |
+| R1 Poly-9 | 1312 | 1.43 | 33 | Polynomial core |
+| A1 Direct Poly | 1404-1547 | 3.58-3.61 | 33 | Direct polynomial (7th/9th degree) |
+| R5 LUT | 13215 | 15.02 | 0 | LUT (needs separate tail handler) |
 
-**Saturation thresholds**: x ≥ 3 → x, x ≤ -9 → 0 (with specialized tail LUT from -8.5 to -3.5)
+**Saturation thresholds**: x ≥ 3 → x, x ≤ -9 → 0
 
-**Max-ULP analysis**: The 9904 max-ULP comes from the extreme negative tail (x=-8.375). At this point, GELU values are ~1e-15, and linear interpolation in our tail LUT doesn't perfectly match the exponential decay. Further improvement requires finer LUT resolution or accepting this as a hardware limitation of bf16.
+**Tail handling**: Extended LUT from x=-3.5 to x=-8.3125 with 0.25-step + finer resolution near bf16 underflow boundary. For x < -8.3125, bf16 underflows to -0.
 
 ## Quick Reference
 
@@ -117,15 +117,15 @@ Saturation thresholds (asymmetric):
   x ≥ 3  → GELU(x) ≈ x    (Φ(3) = 0.99865)
   x ≤ -9 → GELU(x) ≈ 0    (bf16(GELU(-9)) = -0)
 
-Tail handling (x ∈ [-8.5, -3.5]):
-  - LUT with 10 calibration points (0.5 step)
+Tail handling (x ∈ [-8.3125, -3.5]):
+  - Extended LUT with 21 calibration points (0.25 step)
   - Linear interpolation between points
-  - Handles exponential decay that polynomial/rational approximations miss
+  - For x < -8.3125, bf16 underflows to -0
 
 Key approximations:
-  C1 Spline:    9-segment Hermite + Taylor near-zero [BEST: 0.60 mean ULP]
-  B3 Erf:       Piecewise erf (Taylor |z|<1, A-S rational |z|≥1) [0.61 mean ULP]
-  R4 Tanh:      GELU(x) ≈ 0.5x(1 + tanh(0.7979(x + 0.0447x³))) [0.61 mean ULP]
+  C1 Spline:    9-segment Hermite + Taylor near-zero [BEST: 0.13 mean ULP, 145 max ULP]
+  B3 Erf:       Piecewise erf (Taylor |z|<1, A-S rational |z|≥1) [0.13 mean ULP, 145 max ULP]
+  R4 Tanh:      GELU(x) ≈ 0.5x(1 + tanh(0.7979(x + 0.0447x³))) [0.14 mean ULP, 166 max ULP]
   tanh approx:  tanh(z) ≈ z·(1 + 0.128z² + ...)/(1 + 0.462z² + ...) [3,3] Padé
 ```
 
@@ -135,19 +135,19 @@ Regions: near_zero (|x|<0.5), core_pos/neg (0.5≤|x|<3), tail_pos/neg (|x|≥3)
 
 | Method | near_zero | core_pos | core_neg | tail_pos | tail_neg |
 |--------|-----------|----------|----------|----------|----------|
-| **C1 Spline** | **0.00** | 0.07 | 4.09 | 0.00 | **2.32** |
-| **B3 Erf** | **0.00** | 0.04 | 2.03 | 0.00 | 2.41 |
-| **R4 Tanh** | **0.00** | **0.03** | **1.75** | 0.00 | 2.43 |
-| R2 Rational | 0.00 | 5.02 | 126.52 | 0.00 | 4.19 |
-| R1 Poly-9 | 0.00 | 7.38 | 150.87 | 0.00 | 4.52 |
+| **C1 Spline** | **0.00** | 0.07 | 4.09 | 0.00 | **0.05** |
+| **B3 Erf** | **0.00** | 0.04 | 2.03 | 0.00 | 0.05 |
+| **R4 Tanh** | **0.00** | **0.03** | **1.75** | 0.00 | 0.53 |
+| R2 Rational | 0.00 | 5.02 | 126.52 | 0.00 | 1.08 |
+| R1 Poly-9 | 0.00 | 7.38 | 150.87 | 0.00 | 3.12 |
 
-(Mean ULP per region. Top 3 methods all achieve near-zero error in near_zero region.)
+(Mean ULP per region. Extended tail LUT dramatically reduced tail_neg errors.)
 
 ## Design Decisions
 
 1. **Type punning**: Use `std::memcpy()` only (no reinterpret_cast, no unions)
 2. **ULP indexing**: +0 and -0 share same index; NaN/Inf excluded (65280 valid values)
-3. **Saturation**: Asymmetric thresholds (3, -9) with specialized tail LUT for [-8.5, -3.5]
+3. **Saturation**: Asymmetric thresholds (3, -9) with specialized tail LUT for [-8.3125, -3.5]
 4. **Internal precision**: float32 for calculations, bfloat16 for I/O
 5. **Entire range**: Unlike FinalLists.md's [-8,8], we test all 65280 bf16 values
 6. **Tail handling**: LUT-based interpolation for negative tail where approximations fail
