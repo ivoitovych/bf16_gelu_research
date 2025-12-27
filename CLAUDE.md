@@ -30,6 +30,10 @@ g++ -std=c++23 -O2 -o ulp_calculator ulp_calculator.cpp
 ./gelu_analysis --fma          # E6/G2: FMA vs non-FMA comparison
 ./gelu_analysis --sensitivity  # E7: Coefficient sensitivity
 ./gelu_analysis --cost-model   # G5: Operation cost model
+./gelu_analysis --epss         # C5: EPSS knot refinement
+./gelu_analysis --range-scale  # E3: Range-scaled approximation
+./gelu_analysis --denormal     # E5/E8: Denormal and FTZ testing
+./gelu_analysis --softmax-unit # H2: GELU-Softmax combined unit
 ./gelu_analysis --all          # All modes
 ```
 
@@ -53,28 +57,18 @@ g++ -std=c++23 -O2 -o ulp_calculator ulp_calculator.cpp
 
 ## Implementation Status vs FinalLists.md
 
-### Coverage: 35/40 methods (87.5%)
+### Coverage: 40/40 methods (100%)
 
 | Category | Total | Done | Methods Implemented |
 |----------|-------|------|---------------------|
 | **A: Direct** | 4 | 4 ✓ | A1 (poly-7, poly-9), A2 ([4/4]), A3 (Chebyshev), A4 (CF) |
 | **B: Sub-function** | 4 | 4 ✓ | B1, B1v2 (sigmoid), B2/R4 (tanh), B3 (erf), B4 (rational erf) |
-| **C: Piecewise** | 5 | 4 | C1 (spline), C2 (rational), C3/R3 (PWL), C4/R1 (sat+core) |
+| **C: Piecewise** | 5 | 5 ✓ | C1 (spline), C2 (rational), C3/R3 (PWL), C4/R1 (sat+core), C5 (EPSS) |
 | **D: Hybrid/LUT** | 4 | 4 ✓ | D1/R5 (LUT), D2 (LUT+erf), D3 (LUT+corr), D4 (nonuniform) |
-| **E: BF16 Knobs** | 8 | 5 | E1 (bounds), E2 (quant), E4 (breakpoints), E6 (FMA), E7 (sens) |
+| **E: BF16 Knobs** | 8 | 8 ✓ | E1-E8 all complete (E3 range-scale, E5/E8 denormal/FTZ) |
 | **F: Reference** | 4 | 4 ✓ | F1 (float64), F2 (quadrature), F3 (CF erf), F4 (in B3) |
 | **G: Methodology** | 8 | 8 ✓ | G1-G8 all complete |
-| **H: Advanced** | 3 | 2 | H1 (inverse), H3 (SoftEx) |
-
-### Remaining Gaps (5 items)
-
-| ID | Method | Priority | Reason |
-|----|--------|----------|--------|
-| C5 | EPSS knot refinement | Low | Optimization technique, not core method |
-| E3 | Range-Scaled Approximation | Low | Theoretical, marginal benefit expected |
-| E5 | Denormal Policy Testing | Medium | Would verify subnormal edge cases |
-| E8 | FTZ Policy Testing | Medium | Same as E5, flush-to-zero behavior |
-| H2 | GELU-Softmax Unit | Low | Hardware-specific, out of project scope |
+| **H: Advanced** | 3 | 3 ✓ | H1 (inverse), H2 (GELU-Softmax), H3 (SoftEx) |
 
 ### Best Performers (Max ULP ≤ 200)
 
@@ -108,6 +102,8 @@ g++ -std=c++23 -O2 -o ulp_calculator ulp_calculator.cpp
 | C2 Piecewise | 881 | 1.18 | 1 | Piecewise rational |
 | B1 Sigmoid | 1068 | 1.67 | 18 | Simple sigmoid |
 | R2 Rational | 1139 | 1.22 | 2 | Rational Padé |
+| **E3 Range-Scaled** | 1130 | 1.75 | 10 | BF16 exponent-aligned scaling |
+| **H2 GELU-Softmax** | 1130 | 1.33 | 9 | PWL exp shared with softmax |
 | A4 Cont.Frac | 1206 | 1.73 | 15 | Continued fraction |
 | A3 Chebyshev | 1207 | 2.57 | 45 | Chebyshev (Clenshaw) |
 | H3 SoftEx | 1247 | 1.28 | 1 | Arithmetic exp via Padé |
@@ -180,8 +176,13 @@ Regions: near_zero (|x|<0.5), core_pos/neg (0.5≤|x|<3), tail_pos/neg (|x|≥3)
 
 ## Project Status
 
-**All phases complete.** 8 methods achieve Max ULP = 145 (bf16 underflow limit):
+**All phases complete. 100% taxonomy coverage (40/40 methods).**
+
+8 methods achieve Max ULP = 145 (bf16 underflow limit):
 - R5 LUT (0.10 mean), C1 Spline (0.13), B3 Erf (0.13), D2 LUT+Erf (0.13)
 - F2 Quadrature (0.13), R4 Tanh (0.14, max 166), F3 CF Erf (0.15), D4 Non-uniform (0.63)
 
-Analysis tools available: `--quantization`, `--fma`, `--sensitivity`, `--cost-model`
+24 GELU implementations + analysis tools:
+- Core methods: `--analyze` (24 implementations with G3 region analysis)
+- Engineering: `--quantization`, `--fma`, `--sensitivity`, `--cost-model`
+- Gap closures: `--epss`, `--range-scale`, `--denormal`, `--softmax-unit`
