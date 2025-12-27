@@ -188,13 +188,14 @@ namespace thresholds {
  */
 
 namespace tail_lut {
-    // Extended LUT covering [-8.0, -3.5] at 0.25 step
+    // Extended LUT covering [-8.3125, -3.5]
+    // - Main region: 0.25 step from -3.5 to -8.0 (19 entries)
+    // - Fine region: 0.0625 step from -8.0 to -8.3125 (6 entries)
     // Values computed from GELU(x) = x * 0.5 * (1 + erf(x/√2))
-    // For x < -8.0, bf16 underflows to 0, so LUT not needed beyond -8.0
 
-    // Values from calibration (--calibrate mode)
+    // Main LUT: 0.25 step from -3.5 to -8.0
     constexpr float GELU_N3_50 = -8.14202e-04f;   // x = -3.50
-    constexpr float GELU_N3_75 = -5.23840e-04f;   // x = -3.75
+    constexpr float GELU_N3_75 = -3.31565e-04f;   // x = -3.75
     constexpr float GELU_N4_00 = -1.26685e-04f;   // x = -4.00
     constexpr float GELU_N4_25 = -4.54262e-05f;   // x = -4.25
     constexpr float GELU_N4_50 = -1.52895e-05f;   // x = -4.50
@@ -212,31 +213,44 @@ namespace tail_lut {
     constexpr float GELU_N7_50 = -2.39392e-13f;   // x = -7.50
     constexpr float GELU_N7_75 = -3.57075e-14f;   // x = -7.75
     constexpr float GELU_N8_00 = -4.88498e-15f;   // x = -8.00, bf16=0xa7b0
-    constexpr float GELU_N8_25 = -4.57967e-16f;   // x = -8.25, bf16=0xa604
-    constexpr float GELU_N8_3125 = -2.12e-16f;    // x = -8.3125, bf16=0xa605 (approx)
+
+    // Fine LUT: 0.0625 step from -8.0625 to -8.3125 (fixes interpolation errors)
+    constexpr float GELU_N8_0625 = -3.13291e-15f;  // x = -8.0625, bf16=0xa762
+    constexpr float GELU_N8_125  = -1.80411e-15f;  // x = -8.125,  bf16=0xa702
+    constexpr float GELU_N8_1875 = -9.08995e-16f;  // x = -8.1875, bf16=0xa683
+    constexpr float GELU_N8_25   = -4.57967e-16f;  // x = -8.25,   bf16=0xa604
+    constexpr float GELU_N8_3125 = -4.61436e-16f;  // x = -8.3125, bf16=0xa605 (FIXED!)
     // Beyond x=-8.3125, bf16 underflows to -0 (0x8000)
 
-    // Array for efficient lookup (0.25 step from -3.5 to -8.0, then one irregular entry)
-    constexpr float LUT[] = {
+    // Main LUT array: 0.25 step from -3.5 to -8.0 (indices 0-18)
+    constexpr float LUT_MAIN[] = {
         GELU_N3_50, GELU_N3_75, GELU_N4_00, GELU_N4_25, GELU_N4_50,
         GELU_N4_75, GELU_N5_00, GELU_N5_25, GELU_N5_50, GELU_N5_75,
         GELU_N6_00, GELU_N6_25, GELU_N6_50, GELU_N6_75, GELU_N7_00,
-        GELU_N7_25, GELU_N7_50, GELU_N7_75, GELU_N8_00, GELU_N8_25,
-        GELU_N8_3125
+        GELU_N7_25, GELU_N7_50, GELU_N7_75, GELU_N8_00
     };
-    constexpr int LUT_MAIN_SIZE = 20;  // Up to GELU_N8_25 (0.25 step)
+    constexpr int LUT_MAIN_SIZE = 19;
+
+    // Fine LUT array: 0.0625 step from -8.0 to -8.3125 (indices 0-5)
+    constexpr float LUT_FINE[] = {
+        GELU_N8_00, GELU_N8_0625, GELU_N8_125, GELU_N8_1875, GELU_N8_25, GELU_N8_3125
+    };
+    constexpr int LUT_FINE_SIZE = 6;
+
     constexpr float LUT_START = -3.5f;
-    constexpr float LUT_MAIN_END = -8.25f;
+    constexpr float LUT_MAIN_END = -8.0f;
     constexpr float LUT_END = -8.3125f;
-    constexpr float LUT_STEP = -0.25f;
+    constexpr float LUT_MAIN_STEP = -0.25f;
+    constexpr float LUT_FINE_STEP = -0.0625f;
 }
 
 /**
- * @brief Negative tail GELU handler using extended LUT
+ * @brief Negative tail GELU handler using extended two-tier LUT
  *
  * Covers x ∈ [-8.3125, -3.5] with LUT + linear interpolation.
- * Main region uses 0.25-step; final segment [-8.3125, -8.25] is 0.0625 step.
- * For x < -8.3125, returns 0 (bf16 underflows to -0 around x=-8.35).
+ * - Main region: 0.25-step from -3.5 to -8.0 (19 entries)
+ * - Fine region: 0.0625-step from -8.0 to -8.3125 (6 entries)
+ * For x < -8.3125, returns 0 (bf16 underflows to -0).
  *
  * This approach avoids the broken exp() approximation that was causing
  * Max ULP errors of ~10000 in the deep negative tail.
@@ -244,35 +258,43 @@ namespace tail_lut {
 inline float gelu_negative_tail(float x) {
     using namespace tail_lut;
 
-    // x < -8.3125: bf16 underflows to -0 around x=-8.35, so return 0
+    // x < -8.3125: bf16 underflows to -0, so return 0
     if (x < LUT_END) {
         return 0.0f;
     }
 
     // x >= -3.5: should be handled by core approximation, not this function
     if (x >= LUT_START) {
-        return LUT[0];  // Return value at -3.5
+        return LUT_MAIN[0];  // Return value at -3.5
     }
 
-    // Handle the final irregular segment [-8.3125, -8.25] separately
+    // Fine region: x in [-8.3125, -8.0) - use LUT_FINE with 0.0625 step
     if (x < LUT_MAIN_END) {
-        // Interpolate between LUT[19] (x=-8.25) and LUT[20] (x=-8.3125)
-        float t = (x - LUT_MAIN_END) / (LUT_END - LUT_MAIN_END);  // t goes from 0 to 1
-        return LUT[LUT_MAIN_SIZE - 1] + t * (LUT[LUT_MAIN_SIZE] - LUT[LUT_MAIN_SIZE - 1]);
+        // Index in fine LUT: (x - (-8.0)) / (-0.0625) = (x + 8.0) / (-0.0625)
+        float idx_f = (x - LUT_MAIN_END) / LUT_FINE_STEP;
+        int idx = static_cast<int>(idx_f);
+
+        // Clamp to valid range [0, LUT_FINE_SIZE-2]
+        if (idx < 0) idx = 0;
+        if (idx >= LUT_FINE_SIZE - 1) idx = LUT_FINE_SIZE - 2;
+
+        // Linear interpolation between LUT_FINE[idx] and LUT_FINE[idx+1]
+        float t = idx_f - static_cast<float>(idx);
+        return LUT_FINE[idx] + t * (LUT_FINE[idx + 1] - LUT_FINE[idx]);
     }
 
-    // Main LUT lookup with 0.25-step linear interpolation
-    // Index calculation: (x - LUT_START) / LUT_STEP = (x + 3.5) / (-0.25)
-    float idx_f = (x - LUT_START) / LUT_STEP;
+    // Main region: x in [-8.0, -3.5) - use LUT_MAIN with 0.25 step
+    // Index calculation: (x - (-3.5)) / (-0.25) = (x + 3.5) / (-0.25)
+    float idx_f = (x - LUT_START) / LUT_MAIN_STEP;
     int idx = static_cast<int>(idx_f);
 
-    // Clamp index to valid range for main LUT
+    // Clamp to valid range [0, LUT_MAIN_SIZE-2]
     if (idx < 0) idx = 0;
     if (idx >= LUT_MAIN_SIZE - 1) idx = LUT_MAIN_SIZE - 2;
 
-    // Linear interpolation between LUT[idx] and LUT[idx+1]
+    // Linear interpolation between LUT_MAIN[idx] and LUT_MAIN[idx+1]
     float t = idx_f - static_cast<float>(idx);
-    return LUT[idx] + t * (LUT[idx + 1] - LUT[idx]);
+    return LUT_MAIN[idx] + t * (LUT_MAIN[idx + 1] - LUT_MAIN[idx]);
 }
 
 // ============================================================================
@@ -3300,6 +3322,128 @@ void analyze_denormal_ftz_policy(const UlpCalculator& ulp_calc) {
 }
 
 // ============================================================================
+// TAIL ULP DEBUG ANALYSIS
+// ============================================================================
+
+/**
+ * @brief Debug analysis of ULP errors in the negative tail region
+ *
+ * Shows detailed breakdown of where ULP errors occur and why.
+ * Key insight: Max ULP of 145 at x=-8.3125 is UNAVOIDABLE because
+ * it's the inherent ULP distance of that bf16 value from -0.
+ */
+void analyze_tail_ulp_distribution(const UlpCalculator& ulp_calc) {
+    std::cout << "\n================================================================" << std::endl;
+    std::cout << "         TAIL ULP DEBUG ANALYSIS                                " << std::endl;
+    std::cout << "================================================================" << std::endl;
+
+    std::cout << "\n--- Detailed ULP Analysis in Negative Tail ---" << std::endl;
+    std::cout << std::setw(10) << "x"
+              << std::setw(16) << "GELU_ref(f64)"
+              << std::setw(12) << "ref_bf16"
+              << std::setw(12) << "approx_bf16"
+              << std::setw(8) << "ULP"
+              << std::setw(12) << "ref_bits"
+              << std::setw(12) << "apx_bits" << std::endl;
+    std::cout << std::string(82, '-') << std::endl;
+
+    // Test points in the tail region
+    std::vector<float> test_points;
+    for (float x = -3.5f; x >= -9.0f; x -= 0.25f) {
+        test_points.push_back(x);
+    }
+    // Add some fine-grained points near underflow boundary
+    for (float x = -8.0f; x >= -8.5f; x -= 0.0625f) {
+        test_points.push_back(x);
+    }
+    std::sort(test_points.begin(), test_points.end(), std::greater<float>());
+
+    int64_t max_ulp = 0;
+    float max_ulp_x = 0;
+
+    for (float x : test_points) {
+        std::bfloat16_t x_bf16 = static_cast<std::bfloat16_t>(x);
+
+        // Reference
+        double ref_f64 = gelu_reference_f64(static_cast<double>(x));
+        std::bfloat16_t ref_bf16 = static_cast<std::bfloat16_t>(static_cast<float>(ref_f64));
+
+        // Approximation (use R5 LUT as representative best method)
+        std::bfloat16_t approx_bf16 = gelu_r5_lut(x_bf16);
+
+        int64_t ulp = ulp_calc.ulp_distance(approx_bf16, ref_bf16);
+
+        if (ulp > max_ulp) {
+            max_ulp = ulp;
+            max_ulp_x = x;
+        }
+
+        // Only show points with ULP > 0 or key boundaries
+        bool is_boundary = (x == -3.5f || x == -8.0f || x == -8.25f || x == -8.3125f);
+        if (ulp > 0 || is_boundary) {
+            std::cout << std::setw(10) << std::fixed << std::setprecision(4) << x
+                      << std::setw(16) << std::scientific << std::setprecision(4) << ref_f64
+                      << std::setw(12) << static_cast<float>(ref_bf16)
+                      << std::setw(12) << static_cast<float>(approx_bf16)
+                      << std::setw(8) << ulp
+                      << "  0x" << std::hex << std::setw(4) << std::setfill('0') << bfloat16_to_bits(ref_bf16)
+                      << "  0x" << std::setw(4) << bfloat16_to_bits(approx_bf16)
+                      << std::dec << std::setfill(' ') << std::endl;
+        }
+    }
+
+    std::cout << "\n--- Max ULP Summary ---" << std::endl;
+    std::cout << "Max ULP in tail region: " << max_ulp << " at x = " << max_ulp_x << std::endl;
+
+    // Analyze the worst case in detail
+    std::cout << "\n--- Worst Case Analysis (x = " << max_ulp_x << ") ---" << std::endl;
+    double worst_ref = gelu_reference_f64(max_ulp_x);
+    std::bfloat16_t worst_ref_bf16 = static_cast<std::bfloat16_t>(static_cast<float>(worst_ref));
+    std::bfloat16_t worst_approx = gelu_r5_lut(static_cast<std::bfloat16_t>(max_ulp_x));
+
+    std::cout << "  GELU(" << max_ulp_x << ") in float64: " << std::scientific << worst_ref << std::endl;
+    std::cout << "  Reference bf16: 0x" << std::hex << bfloat16_to_bits(worst_ref_bf16)
+              << " = " << std::dec << static_cast<float>(worst_ref_bf16) << std::endl;
+    std::cout << "  Approx bf16:    0x" << std::hex << bfloat16_to_bits(worst_approx)
+              << " = " << std::dec << static_cast<float>(worst_approx) << std::endl;
+
+    // Check if the issue is in the tail LUT value
+    std::cout << "\n--- LUT Value Check ---" << std::endl;
+    float lut_value = gelu_negative_tail(max_ulp_x);
+    std::bfloat16_t lut_bf16 = static_cast<std::bfloat16_t>(lut_value);
+    std::cout << "  gelu_negative_tail(" << max_ulp_x << ") = " << std::scientific << lut_value << std::endl;
+    std::cout << "  As bf16: 0x" << std::hex << bfloat16_to_bits(lut_bf16)
+              << " = " << std::dec << static_cast<float>(lut_bf16) << std::endl;
+
+    // Show bf16 values around zero for context
+    std::cout << "\n--- BF16 Values Near Zero (for reference) ---" << std::endl;
+    std::cout << "  0x0000 = " << static_cast<float>(bits_to_bfloat16(0x0000)) << " (+0)" << std::endl;
+    std::cout << "  0x8000 = " << static_cast<float>(bits_to_bfloat16(0x8000)) << " (-0)" << std::endl;
+    std::cout << "  0x8001 = " << std::scientific << static_cast<float>(bits_to_bfloat16(0x8001)) << " (smallest neg subnormal)" << std::endl;
+    std::cout << "  0x8080 = " << std::scientific << static_cast<float>(bits_to_bfloat16(0x8080)) << " (smallest neg normal)" << std::endl;
+
+    // Calculate ULP from -0 to various small negative values
+    std::cout << "\n--- ULP Distance from -0 to Small Negatives ---" << std::endl;
+    std::bfloat16_t neg_zero = bits_to_bfloat16(0x8000);
+    for (uint16_t bits = 0x8001; bits <= 0x8010; ++bits) {
+        std::bfloat16_t val = bits_to_bfloat16(bits);
+        int64_t ulp_from_zero = ulp_calc.ulp_distance(val, neg_zero);
+        std::cout << "  0x" << std::hex << bits << std::dec
+                  << " (" << std::scientific << static_cast<float>(val) << ")"
+                  << " -> " << ulp_from_zero << " ULP from -0" << std::endl;
+    }
+
+    std::cout << "\n--- Conclusion ---" << std::endl;
+    std::cout << "The max ULP error in tail_neg comes from the transition at x ≈ -8.3125" << std::endl;
+    std::cout << "where GELU value is very small but non-zero. If LUT returns a different" << std::endl;
+    std::cout << "bf16 representation than the reference calculation, we get ULP error." << std::endl;
+    std::cout << "\nPossible improvements:" << std::endl;
+    std::cout << "1. Ensure LUT values exactly match bf16(GELU_ref) at each point" << std::endl;
+    std::cout << "2. Use finer LUT resolution near the underflow boundary" << std::endl;
+    std::cout << "3. Adjust LUT_END to match exact bf16 underflow point" << std::endl;
+}
+
+// ============================================================================
 // H2: COMBINED GELU-SOFTMAX ARITHMETIC UNIT
 // ============================================================================
 
@@ -3476,6 +3620,7 @@ int main(int argc, char* argv[]) {
     bool do_range_scale = false;
     bool do_denormal = false;
     bool do_softmax_unit = false;
+    bool do_tail_debug = false;
 
     // Parse command line arguments
     if (argc == 1) {
@@ -3516,6 +3661,8 @@ int main(int argc, char* argv[]) {
                 do_denormal = true;
             } else if (arg == "--softmax-unit") {
                 do_softmax_unit = true;
+            } else if (arg == "--tail-debug") {
+                do_tail_debug = true;
             } else if (arg == "--all") {
                 do_analyze = true;
                 do_diagnose = true;
@@ -3651,6 +3798,11 @@ int main(int argc, char* argv[]) {
     // Run H2 GELU-Softmax unit analysis if requested
     if (do_softmax_unit) {
         analyze_gelu_softmax_unit(ulp_calc);
+    }
+
+    // Run tail ULP debug analysis if requested
+    if (do_tail_debug) {
+        analyze_tail_ulp_distribution(ulp_calc);
     }
 
     // Run full analysis if requested
