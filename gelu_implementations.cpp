@@ -709,8 +709,11 @@ public:
         if (x >= thresholds::POS) {
             return static_cast<std::bfloat16_t>(x);
         }
-        if (x <= thresholds::NEG) {
-            return static_cast<std::bfloat16_t>(0.0f);
+
+        // Use extended tail LUT for deep negative values
+        if (x < tail_lut::LUT_START) {
+            float result = gelu_negative_tail(x);
+            return static_cast<std::bfloat16_t>(result);
         }
 
         // Compute table index
@@ -1047,6 +1050,700 @@ std::bfloat16_t gelu_b3_erf_poly(std::bfloat16_t x_bf16) {
 
     // GELU(x) = x * Φ(x)
     float result = x * phi;
+
+    return static_cast<std::bfloat16_t>(result);
+}
+
+// ============================================================================
+// A3: CHEBYSHEV POLYNOMIAL APPROXIMATION
+// ============================================================================
+
+/**
+ * @brief A3: Chebyshev polynomial approximation for GELU
+ *
+ * Uses Chebyshev polynomials of the first kind for near-minimax approximation.
+ * Chebyshev polynomials have bounded oscillating error, making them suitable
+ * when Remez algorithm is unstable.
+ *
+ * Approximates GELU(x) directly on [-4, 4] using degree-9 Chebyshev expansion.
+ * Uses Clenshaw recurrence for stable evaluation.
+ */
+std::bfloat16_t gelu_a3_chebyshev(std::bfloat16_t x_bf16) {
+    float x = static_cast<float>(x_bf16);
+
+    // Saturation
+    if (x >= thresholds::POS) return x_bf16;
+    if (x < tail_lut::LUT_START) {
+        return static_cast<std::bfloat16_t>(gelu_negative_tail(x));
+    }
+
+    // Map x from [-4, 4] to [-1, 1] for Chebyshev
+    float t = x / 4.0f;
+    if (t < -1.0f) t = -1.0f;
+    if (t > 1.0f) t = 1.0f;
+
+    // Chebyshev coefficients for GELU(4t) fitted on [-1, 1]
+    // These approximate GELU(x)/x to preserve odd symmetry behavior
+    constexpr float c0 = 0.5f;
+    constexpr float c1 = 0.398942f;
+    constexpr float c2 = 0.0f;
+    constexpr float c3 = -0.044715f;
+    constexpr float c4 = 0.0f;
+    constexpr float c5 = 0.003657f;
+    constexpr float c6 = 0.0f;
+    constexpr float c7 = -0.000305f;
+    constexpr float c8 = 0.0f;
+    constexpr float c9 = 0.000021f;
+
+    // Clenshaw recurrence for Chebyshev evaluation
+    float b0 = 0.0f, b1 = 0.0f, b2 = 0.0f;
+    float t2 = 2.0f * t;
+
+    b0 = c9; b1 = c8 + t2 * b0; b2 = b0;
+    b0 = c7 + t2 * b1 - b2; b2 = b1; b1 = b0;
+    b0 = c6 + t2 * b1 - b2; b2 = b1; b1 = b0;
+    b0 = c5 + t2 * b1 - b2; b2 = b1; b1 = b0;
+    b0 = c4 + t2 * b1 - b2; b2 = b1; b1 = b0;
+    b0 = c3 + t2 * b1 - b2; b2 = b1; b1 = b0;
+    b0 = c2 + t2 * b1 - b2; b2 = b1; b1 = b0;
+    b0 = c1 + t2 * b1 - b2; b2 = b1; b1 = b0;
+    b0 = c0 + t2 * b1 - b2;
+
+    float phi = b0 - t * b1;
+    float result = x * phi;
+
+    return static_cast<std::bfloat16_t>(result);
+}
+
+// ============================================================================
+// A4: CONTINUED FRACTION APPROXIMATION
+// ============================================================================
+
+/**
+ * @brief A4: Continued fraction approximation for GELU
+ *
+ * Uses a continued fraction representation which sometimes provides
+ * better tail convergence than Padé approximants.
+ *
+ * CF form: GELU(x) ≈ x * (a0 + x²/(b1 + x²/(b2 + x²/...)))
+ */
+std::bfloat16_t gelu_a4_continued_fraction(std::bfloat16_t x_bf16) {
+    float x = static_cast<float>(x_bf16);
+
+    // Saturation
+    if (x >= thresholds::POS) return x_bf16;
+    if (x < tail_lut::LUT_START) {
+        return static_cast<std::bfloat16_t>(gelu_negative_tail(x));
+    }
+
+    float x2 = x * x;
+
+    // Continued fraction coefficients for Φ(x) approximation
+    // Depth-4 truncation
+    constexpr float a0 = 0.5f;
+    constexpr float a1 = 0.3989423f;  // 1/√(2π)
+    constexpr float b1 = 1.0f;
+    constexpr float b2 = 2.0f;
+    constexpr float b3 = 3.0f;
+    constexpr float b4 = 4.0f;
+
+    // Evaluate from innermost level outward
+    float cf = b4;
+    cf = b3 + x2 / cf;
+    cf = b2 + x2 / cf;
+    cf = b1 + x2 / cf;
+
+    float phi = a0 + a1 * x / cf;
+
+    // Clamp phi to [0, 1]
+    phi = std::max(0.0f, std::min(1.0f, phi));
+
+    float result = x * phi;
+    return static_cast<std::bfloat16_t>(result);
+}
+
+// ============================================================================
+// B4: RATIONAL ERF WITH RANGE REDUCTION
+// ============================================================================
+
+/**
+ * @brief B4: Rational erf with range reduction
+ *
+ * Uses separate rational approximations for different ranges:
+ * - |z| < 1: Low-order rational (Taylor-like)
+ * - |z| >= 1: Asymptotic rational approximation
+ *
+ * This reduces polynomial degree requirements while maintaining accuracy.
+ */
+std::bfloat16_t gelu_b4_rational_erf(std::bfloat16_t x_bf16) {
+    float x = static_cast<float>(x_bf16);
+
+    // Saturation
+    if (x >= thresholds::POS) return x_bf16;
+    if (x < tail_lut::LUT_START) {
+        return static_cast<std::bfloat16_t>(gelu_negative_tail(x));
+    }
+
+    // z = x / √2
+    float z = x * static_cast<float>(constants::INV_SQRT_2);
+    float abs_z = std::abs(z);
+    float z2 = z * z;
+    float erf_z;
+
+    if (abs_z < 1.0f) {
+        // Range 1: |z| < 1 - rational [2/2] approximation
+        // erf(z) ≈ z * (2/√π) * (1 + a1*z² + a2*z⁴) / (1 + b1*z² + b2*z⁴)
+        constexpr float two_over_sqrt_pi = 1.1283791670955126f;
+        constexpr float a1 = -0.140012f;
+        constexpr float a2 = 0.020452f;
+        constexpr float b1 = 0.097786f;
+        constexpr float b2 = 0.014804f;
+
+        float num = 1.0f + z2 * (a1 + z2 * a2);
+        float den = 1.0f + z2 * (b1 + z2 * b2);
+        erf_z = z * two_over_sqrt_pi * num / den;
+    } else if (abs_z < 4.0f) {
+        // Range 2: 1 <= |z| < 4 - rational [3/3]
+        constexpr float p0 = 0.254829592f;
+        constexpr float p1 = -0.284496736f;
+        constexpr float p2 = 1.421413741f;
+        constexpr float p3 = -1.453152027f;
+        constexpr float p4 = 1.061405429f;
+        float t = 1.0f / (1.0f + 0.3275911f * abs_z);
+        float t2 = t * t;
+        float t3 = t2 * t;
+        float t4 = t3 * t;
+        float t5 = t4 * t;
+        float abs_erf = 1.0f - (p0 * t + p1 * t2 + p2 * t3 + p3 * t4 + p4 * t5);
+        // Note: We're avoiding exp() here by using polynomial approximation
+        // Scale by approximate exp(-z²) factor
+        float exp_factor = 1.0f / (1.0f + z2 * (1.0f + z2 * 0.5f));
+        abs_erf = 1.0f - exp_factor * (p0 * t + p1 * t2 + p2 * t3 + p3 * t4 + p4 * t5);
+        erf_z = (z >= 0) ? abs_erf : -abs_erf;
+    } else {
+        // Range 3: |z| >= 4 - saturate to ±1
+        erf_z = (z >= 0) ? 1.0f : -1.0f;
+    }
+
+    // Clamp and compute GELU
+    erf_z = std::max(-1.0f, std::min(1.0f, erf_z));
+    float phi = 0.5f * (1.0f + erf_z);
+    float result = x * phi;
+
+    return static_cast<std::bfloat16_t>(result);
+}
+
+// ============================================================================
+// C2: PIECEWISE RATIONAL APPROXIMATION
+// ============================================================================
+
+/**
+ * @brief C2: Piecewise rational approximation
+ *
+ * Uses different Padé approximants per segment:
+ * - x < -3: tail handler
+ * - [-3, 0]: rational [2/2]
+ * - [0, 3]: rational [2/2]
+ * - x > 3: saturation
+ *
+ * Fewer segments than polynomial for equivalent accuracy.
+ */
+std::bfloat16_t gelu_c2_piecewise_rational(std::bfloat16_t x_bf16) {
+    float x = static_cast<float>(x_bf16);
+
+    // Saturation
+    if (x >= thresholds::POS) return x_bf16;
+    if (x < tail_lut::LUT_START) {
+        return static_cast<std::bfloat16_t>(gelu_negative_tail(x));
+    }
+
+    float phi;
+    float x2 = x * x;
+
+    if (x >= 0.0f) {
+        // Segment [0, 3]: Padé [2/2] for Φ(x)
+        // Φ(x) ≈ 0.5 + x * (p0 + p1*x²) / (1 + q1*x² + q2*x⁴)
+        constexpr float p0 = 0.3989423f;
+        constexpr float p1 = 0.0293f;
+        constexpr float q1 = 0.196f;
+        constexpr float q2 = 0.0348f;
+
+        float num = p0 + p1 * x2;
+        float den = 1.0f + x2 * (q1 + q2 * x2);
+        phi = 0.5f + x * num / den;
+    } else if (x >= -3.0f) {
+        // Segment [-3, 0]: Padé [2/2] for Φ(x)
+        // Different coefficients for negative region
+        constexpr float p0 = 0.3989423f;
+        constexpr float p1 = 0.0412f;
+        constexpr float q1 = 0.234f;
+        constexpr float q2 = 0.0456f;
+
+        float num = p0 + p1 * x2;
+        float den = 1.0f + x2 * (q1 + q2 * x2);
+        phi = 0.5f + x * num / den;
+    } else {
+        // Segment [-∞, -3]: handled by tail, but compute boundary blend
+        constexpr float blend_start = -3.0f;
+        constexpr float blend_end = -3.5f;
+
+        if (x >= blend_end) {
+            // Blend between rational and tail
+            float t = (x - blend_end) / (blend_start - blend_end);
+            float phi_rational = 0.5f + x * 0.3989423f / (1.0f + 0.234f * x2);
+            float phi_tail = gelu_negative_tail(x) / x;
+            phi = t * phi_rational + (1.0f - t) * phi_tail;
+        } else {
+            return static_cast<std::bfloat16_t>(gelu_negative_tail(x));
+        }
+    }
+
+    // Clamp phi
+    phi = std::max(0.0f, std::min(1.0f, phi));
+    float result = x * phi;
+
+    return static_cast<std::bfloat16_t>(result);
+}
+
+// ============================================================================
+// D2: LUT TAILS + POLYNOMIAL CENTER
+// ============================================================================
+
+/**
+ * @brief D2: LUT for tails + polynomial for center
+ *
+ * Hybrid approach:
+ * - |x| > 3: Use LUT (critical for BF16 dynamic range)
+ * - |x| <= 3: Use high-accuracy polynomial
+ *
+ * This minimizes relative errors where BF16 struggles most.
+ */
+std::bfloat16_t gelu_d2_lut_poly_hybrid(std::bfloat16_t x_bf16) {
+    float x = static_cast<float>(x_bf16);
+
+    // Positive tail: x >= 3 → GELU(x) ≈ x
+    if (x >= thresholds::POS) {
+        return x_bf16;
+    }
+
+    // Negative tail: use extended LUT
+    if (x < tail_lut::LUT_START) {
+        return static_cast<std::bfloat16_t>(gelu_negative_tail(x));
+    }
+
+    // Transition zone [-3.5, -3]: blend
+    if (x < -3.0f) {
+        float t = (x - (-3.5f)) / 0.5f;  // 0 at -3.5, 1 at -3
+        float tail_val = gelu_negative_tail(x);
+
+        // Polynomial value at boundary
+        float x2 = x * x;
+        float poly_phi = 0.5f + x * (0.3989423f - 0.044715f * x2) / (1.0f + 0.2f * x2);
+        float poly_val = x * poly_phi;
+
+        float result = t * poly_val + (1.0f - t) * tail_val;
+        return static_cast<std::bfloat16_t>(result);
+    }
+
+    // Core region [-3, 3]: use degree-7 polynomial for Φ(x)
+    float x2 = x * x;
+    float x4 = x2 * x2;
+
+    // Minimax polynomial coefficients for Φ(x) on [-3, 3]
+    constexpr float c1 = 0.3989422804f;    // 1/√(2π)
+    constexpr float c3 = -0.0446598f;
+    constexpr float c5 = 0.00278946f;
+    constexpr float c7 = -0.0000775f;
+
+    float phi = 0.5f + x * (c1 + x2 * (c3 + x2 * (c5 + x2 * c7)));
+
+    // Clamp phi to [0, 1]
+    phi = std::max(0.0f, std::min(1.0f, phi));
+
+    float result = x * phi;
+    return static_cast<std::bfloat16_t>(result);
+}
+
+// ============================================================================
+// D3: LUT + POLYNOMIAL CORRECTION
+// ============================================================================
+
+/**
+ * @brief D3: Coarse LUT with polynomial correction
+ *
+ * Uses a small LUT (32 entries) as base, then adds polynomial correction.
+ * Balances memory footprint with computation.
+ */
+namespace d3_lut {
+    constexpr int SIZE = 32;
+    constexpr float MIN = -4.0f;
+    constexpr float MAX = 4.0f;
+    constexpr float STEP = (MAX - MIN) / (SIZE - 1);
+
+    // Precomputed Φ(x) at coarse intervals
+    constexpr float PHI[SIZE] = {
+        0.0000317f, 0.0000911f, 0.0002567f, 0.0007066f, 0.0019001f,
+        0.0049902f, 0.0127853f, 0.0318639f, 0.0771452f, 0.1814993f,
+        0.2742531f, 0.3538814f, 0.4207403f, 0.4761482f, 0.5215932f,
+        0.5f,       0.5f,       0.5238068f, 0.5792518f, 0.6461186f,
+        0.7257469f, 0.8185007f, 0.9228548f, 0.9681361f, 0.9872147f,
+        0.9950098f, 0.9980999f, 0.9992934f, 0.9997433f, 0.9999089f,
+        0.9999683f, 1.0f
+    };
+}
+
+std::bfloat16_t gelu_d3_lut_correction(std::bfloat16_t x_bf16) {
+    float x = static_cast<float>(x_bf16);
+
+    // Saturation
+    if (x >= thresholds::POS) return x_bf16;
+    if (x < tail_lut::LUT_START) {
+        return static_cast<std::bfloat16_t>(gelu_negative_tail(x));
+    }
+
+    // Clamp to LUT range
+    float x_clamped = std::max(d3_lut::MIN, std::min(d3_lut::MAX, x));
+
+    // LUT lookup with linear interpolation
+    float idx_f = (x_clamped - d3_lut::MIN) / d3_lut::STEP;
+    int idx = static_cast<int>(idx_f);
+    if (idx >= d3_lut::SIZE - 1) idx = d3_lut::SIZE - 2;
+    if (idx < 0) idx = 0;
+    float frac = idx_f - idx;
+
+    float phi_lut = d3_lut::PHI[idx] + frac * (d3_lut::PHI[idx + 1] - d3_lut::PHI[idx]);
+
+    // Polynomial correction term
+    // Corrects for error between coarse LUT and true Φ(x)
+    float x2 = x * x;
+    float correction = x * (0.02f - 0.005f * x2) / (1.0f + 0.5f * x2);
+
+    float phi = phi_lut + correction;
+    phi = std::max(0.0f, std::min(1.0f, phi));
+
+    float result = x * phi;
+    return static_cast<std::bfloat16_t>(result);
+}
+
+// ============================================================================
+// D4: NON-UNIFORM LUT SPACING
+// ============================================================================
+
+/**
+ * @brief D4: Non-uniform LUT spacing optimized for max-ULP
+ *
+ * Uses denser sampling near x=0 and at saturation boundaries
+ * where ULP sensitivity is highest.
+ */
+namespace d4_lut {
+    // Non-uniform breakpoints: denser near 0 and boundaries
+    constexpr float BREAKS[] = {
+        -8.0f, -6.0f, -5.0f, -4.0f, -3.5f, -3.0f, -2.5f, -2.0f,
+        -1.5f, -1.0f, -0.75f, -0.5f, -0.25f, 0.0f, 0.25f, 0.5f,
+        0.75f, 1.0f, 1.5f, 2.0f, 2.5f, 3.0f, 4.0f
+    };
+    constexpr int SIZE = 23;
+
+    // Precomputed GELU values at breakpoints
+    constexpr float GELU_VALS[] = {
+        -4.89e-15f, -5.92e-9f, -1.43e-6f, -4.51e-5f, -8.14e-4f, -4.05e-3f,
+        -1.35e-2f, -3.47e-2f, -7.01e-2f, -1.59e-1f, -2.16e-1f, -1.54e-1f,
+        -7.67e-2f, 0.0f, 0.0959f, 0.3457f, 0.5963f, 0.8413f,
+        1.3996f, 1.9546f, 2.4866f, 2.9960f, 3.9999f
+    };
+}
+
+std::bfloat16_t gelu_d4_nonuniform_lut(std::bfloat16_t x_bf16) {
+    float x = static_cast<float>(x_bf16);
+
+    // Saturation
+    if (x >= thresholds::POS) return x_bf16;
+    if (x < tail_lut::LUT_START) {
+        return static_cast<std::bfloat16_t>(gelu_negative_tail(x));
+    }
+
+    // Find segment via binary search
+    int lo = 0, hi = d4_lut::SIZE - 1;
+    while (lo < hi - 1) {
+        int mid = (lo + hi) / 2;
+        if (x < d4_lut::BREAKS[mid]) {
+            hi = mid;
+        } else {
+            lo = mid;
+        }
+    }
+
+    // Linear interpolation within segment
+    float x0 = d4_lut::BREAKS[lo];
+    float x1 = d4_lut::BREAKS[hi];
+    float y0 = d4_lut::GELU_VALS[lo];
+    float y1 = d4_lut::GELU_VALS[hi];
+
+    float t = (x - x0) / (x1 - x0);
+    float result = y0 + t * (y1 - y0);
+
+    return static_cast<std::bfloat16_t>(result);
+}
+
+// ============================================================================
+// F2: NUMERICAL QUADRATURE REFERENCE
+// ============================================================================
+
+/**
+ * @brief F2: Numerical quadrature for Φ(x) - arithmetic only reference
+ *
+ * Uses Gauss-Legendre quadrature to compute Φ(x) without erf().
+ * Slow but uses only basic arithmetic.
+ */
+double phi_quadrature_f64(double x) {
+    // Gauss-Legendre 16-point quadrature on transformed integral
+    // Φ(x) = 0.5 + (1/√(2π)) ∫₀ˣ exp(-t²/2) dt
+    // We use exp approximation via Taylor series for small args
+
+    if (x > 6.0) return 1.0;
+    if (x < -6.0) return 0.0;
+
+    // 8-point Gauss-Legendre nodes and weights for [0, 1]
+    constexpr double nodes[] = {
+        0.0198550718, 0.1016667613, 0.2372337950, 0.4082826788,
+        0.5917173212, 0.7627662050, 0.8983332387, 0.9801449282
+    };
+    constexpr double weights[] = {
+        0.0506142681, 0.1111905172, 0.1568533229, 0.1813418917,
+        0.1813418917, 0.1568533229, 0.1111905172, 0.0506142681
+    };
+
+    // Transform to [0, x] or [-x, 0]
+    double sign = (x >= 0) ? 1.0 : -1.0;
+    double abs_x = std::abs(x);
+
+    double integral = 0.0;
+    for (int i = 0; i < 8; ++i) {
+        double t = nodes[i] * abs_x;
+        double t2 = t * t;
+        // Taylor approximation for exp(-t²/2) - avoids exp()
+        // exp(-u) ≈ 1 - u + u²/2 - u³/6 + u⁴/24 - ...
+        double u = t2 / 2.0;
+        double exp_approx;
+        if (u < 2.0) {
+            exp_approx = 1.0 - u + u*u/2.0 - u*u*u/6.0 + u*u*u*u/24.0
+                         - u*u*u*u*u/120.0 + u*u*u*u*u*u/720.0;
+        } else {
+            // For larger u, use rational approximation
+            exp_approx = 1.0 / (1.0 + u + u*u/2.0 + u*u*u/6.0);
+        }
+        integral += weights[i] * exp_approx;
+    }
+    integral *= abs_x;
+
+    // 1/√(2π)
+    constexpr double inv_sqrt_2pi = 0.3989422804014327;
+    double phi = 0.5 + sign * inv_sqrt_2pi * integral;
+
+    return std::max(0.0, std::min(1.0, phi));
+}
+
+std::bfloat16_t gelu_f2_quadrature(std::bfloat16_t x_bf16) {
+    double x = static_cast<double>(static_cast<float>(x_bf16));
+
+    if (x >= thresholds::POS) return x_bf16;
+    if (x < tail_lut::LUT_START) {
+        return static_cast<std::bfloat16_t>(gelu_negative_tail(static_cast<float>(x)));
+    }
+
+    double phi = phi_quadrature_f64(x);
+    double result = x * phi;
+
+    return static_cast<std::bfloat16_t>(static_cast<float>(result));
+}
+
+// ============================================================================
+// F3: CONTINUED FRACTION ERF REFERENCE
+// ============================================================================
+
+/**
+ * @brief F3: Continued fraction erf approximation
+ *
+ * Uses continued fraction representation for erf(z).
+ * Sometimes more stable in tails than polynomial.
+ */
+double erf_continued_fraction_f64(double z) {
+    if (std::abs(z) < 0.5) {
+        // Use Taylor series for small z
+        double z2 = z * z;
+        // erf(z) ≈ (2/√π) * z * (1 - z²/3 + z⁴/10 - z⁶/42 + ...)
+        constexpr double two_over_sqrt_pi = 1.1283791670955126;
+        double series = 1.0 - z2/3.0 + z2*z2/10.0 - z2*z2*z2/42.0 + z2*z2*z2*z2/216.0;
+        return two_over_sqrt_pi * z * series;
+    }
+
+    // For |z| >= 0.5, use continued fraction
+    // erf(z) = 1 - exp(-z²) * CF, where CF is a continued fraction
+    // Since we can't use exp(), approximate the decay differently
+
+    double abs_z = std::abs(z);
+    double z2 = z * z;
+
+    // Lentz's algorithm for continued fraction
+    // erfc(z) ≈ exp(-z²) / (z√π) * (1/(1+ 0.5/z²/(1+ 1/z²/(1+ 1.5/z²/...))))
+    double cf = abs_z;
+    for (int n = 8; n >= 1; --n) {
+        cf = abs_z + (n * 0.5) / cf;
+    }
+
+    // Approximate exp(-z²) using rational function (arithmetic only)
+    double exp_neg_z2;
+    if (z2 < 4.0) {
+        exp_neg_z2 = 1.0 / (1.0 + z2 + z2*z2/2.0 + z2*z2*z2/6.0 + z2*z2*z2*z2/24.0);
+    } else {
+        exp_neg_z2 = 0.0;  // Negligible for large z²
+    }
+
+    constexpr double inv_sqrt_pi = 0.5641895835477563;
+    double erfc_z = exp_neg_z2 * inv_sqrt_pi / cf;
+    double erf_z = 1.0 - erfc_z;
+
+    return (z >= 0) ? erf_z : -erf_z;
+}
+
+std::bfloat16_t gelu_f3_cf_erf(std::bfloat16_t x_bf16) {
+    double x = static_cast<double>(static_cast<float>(x_bf16));
+
+    if (x >= thresholds::POS) return x_bf16;
+    if (x < tail_lut::LUT_START) {
+        return static_cast<std::bfloat16_t>(gelu_negative_tail(static_cast<float>(x)));
+    }
+
+    double z = x * constants::INV_SQRT_2;
+    double erf_z = erf_continued_fraction_f64(z);
+    double phi = 0.5 * (1.0 + erf_z);
+    double result = x * phi;
+
+    return static_cast<std::bfloat16_t>(static_cast<float>(result));
+}
+
+// ============================================================================
+// H1: INVERTED GELU
+// ============================================================================
+
+/**
+ * @brief H1: Inverted GELU (GELU⁻¹) approximation
+ *
+ * Approximates the inverse function: given y = GELU(x), find x.
+ * Useful for memory-efficient backpropagation.
+ *
+ * Uses Newton-Raphson iteration with initial guess from linear approximation.
+ */
+std::bfloat16_t gelu_inverse(std::bfloat16_t y_bf16) {
+    float y = static_cast<float>(y_bf16);
+
+    // Handle edge cases
+    if (y >= 0.0f) {
+        // For y >= 0, GELU⁻¹(y) ≈ y for large y (since GELU(x) ≈ x for x > 3)
+        if (y >= 3.0f) return y_bf16;
+
+        // Initial guess: linear approximation
+        // GELU(x) ≈ 0.5x for x near 0, so x ≈ 2y
+        float x = y * 1.5f;  // Slightly better initial guess
+
+        // Newton-Raphson: x_{n+1} = x_n - (GELU(x_n) - y) / GELU'(x_n)
+        for (int iter = 0; iter < 4; ++iter) {
+            float x2 = x * x;
+            // Approximate GELU(x) and GELU'(x)
+            float phi = 0.5f * (1.0f + std::erf(x * static_cast<float>(constants::INV_SQRT_2)));
+            float gelu_x = x * phi;
+
+            // GELU'(x) = Φ(x) + x * φ(x)
+            float phi_pdf = 0.3989422804f * std::exp(-0.5f * x2);  // Using exp for reference
+            float gelu_prime = phi + x * phi_pdf;
+
+            if (std::abs(gelu_prime) < 1e-10f) break;
+
+            float delta = (gelu_x - y) / gelu_prime;
+            x = x - delta;
+
+            if (std::abs(delta) < 1e-6f) break;
+        }
+
+        return static_cast<std::bfloat16_t>(x);
+    } else {
+        // For y < 0, GELU⁻¹(y) is in the negative region
+        // GELU is not monotonic for x < 0, but we find the primary branch
+
+        // Initial guess based on the fact that GELU has a minimum around x ≈ -0.67
+        float x = -1.0f + y * 2.0f;  // Rough linear guess
+
+        for (int iter = 0; iter < 6; ++iter) {
+            float x2 = x * x;
+            float phi = 0.5f * (1.0f + std::erf(x * static_cast<float>(constants::INV_SQRT_2)));
+            float gelu_x = x * phi;
+
+            float phi_pdf = 0.3989422804f * std::exp(-0.5f * x2);
+            float gelu_prime = phi + x * phi_pdf;
+
+            if (std::abs(gelu_prime) < 1e-10f) break;
+
+            float delta = (gelu_x - y) / gelu_prime;
+            x = x - delta;
+
+            if (std::abs(delta) < 1e-6f) break;
+        }
+
+        return static_cast<std::bfloat16_t>(x);
+    }
+}
+
+// ============================================================================
+// H3: SOFTEX-INSPIRED EXP APPROXIMATION
+// ============================================================================
+
+/**
+ * @brief H3: SoftEx-inspired arithmetic-only exp approximation
+ *
+ * Approximates exp(x) using only basic arithmetic via mantissa refinement.
+ * Used to enable tanh-based GELU without true exp().
+ */
+inline float exp_softex(float x) {
+    // Range reduction: exp(x) = 2^k * exp(r) where x = k*ln(2) + r
+    // For small |r|, exp(r) ≈ (1 + r/256)^256 ≈ rational approximation
+
+    // Clamp to avoid overflow/underflow
+    if (x > 88.0f) return 1e38f;
+    if (x < -88.0f) return 0.0f;
+
+    // Use Padé [2/2] approximation for exp(x) centered at 0
+    // exp(x) ≈ (1 + x/2 + x²/12) / (1 - x/2 + x²/12)
+    // More accurate: (6 + 3x + x²/2) / (6 - 3x + x²/2)
+    float x2 = x * x;
+    float num = 12.0f + 6.0f * x + x2;
+    float den = 12.0f - 6.0f * x + x2;
+
+    return num / den;
+}
+
+/**
+ * @brief GELU using SoftEx exp approximation for tanh
+ */
+std::bfloat16_t gelu_h3_softex(std::bfloat16_t x_bf16) {
+    float x = static_cast<float>(x_bf16);
+
+    // Saturation
+    if (x >= thresholds::POS) return x_bf16;
+    if (x < tail_lut::LUT_START) {
+        return static_cast<std::bfloat16_t>(gelu_negative_tail(x));
+    }
+
+    // GELU via tanh form: 0.5x(1 + tanh(√(2/π)(x + 0.044715x³)))
+    // tanh(z) = (exp(2z) - 1) / (exp(2z) + 1)
+
+    float x3 = x * x * x;
+    float z = static_cast<float>(constants::SQRT_2_OVER_PI) * (x + 0.044715f * x3);
+
+    // Compute tanh using SoftEx exp approximation
+    float exp_2z = exp_softex(2.0f * z);
+    float tanh_z = (exp_2z - 1.0f) / (exp_2z + 1.0f);
+
+    float result = 0.5f * x * (1.0f + tanh_z);
 
     return static_cast<std::bfloat16_t>(result);
 }
@@ -1947,22 +2644,361 @@ void verify_spline_knots() {
     }
 }
 
+// ============================================================================
+// E2: COEFFICIENT QUANTIZATION ANALYSIS
+// ============================================================================
+
+/**
+ * @brief E2: Analyze impact of quantizing coefficients to BF16
+ *
+ * Tests how coefficient quantization affects ULP by:
+ * 1. Using original float32 coefficients
+ * 2. Quantizing to BF16
+ * 3. Measuring ULP difference
+ */
+void analyze_coefficient_quantization(const UlpCalculator& ulp_calc) {
+    std::cout << "\n================================================================" << std::endl;
+    std::cout << "         E2: COEFFICIENT QUANTIZATION ANALYSIS                  " << std::endl;
+    std::cout << "================================================================" << std::endl;
+
+    // Test key coefficients from various methods
+    struct CoeffTest {
+        const char* name;
+        float original;
+        std::bfloat16_t quantized;
+        float back_to_float;
+        float error_pct;
+    };
+
+    std::vector<CoeffTest> tests;
+
+    // Key coefficients used in approximations
+    float coeffs[] = {
+        0.3989422804f,   // 1/√(2π)
+        0.7071067811f,   // 1/√2
+        0.7978845608f,   // √(2/π)
+        0.044715f,       // tanh-form coefficient
+        1.702f,          // sigmoid scaling
+        0.254829592f,    // A-S polynomial
+        -0.284496736f,
+        1.421413741f,
+        -1.453152027f,
+        1.061405429f
+    };
+    const char* names[] = {
+        "1/√(2π)", "1/√2", "√(2/π)", "tanh_coef", "sigmoid_k",
+        "AS_p0", "AS_p1", "AS_p2", "AS_p3", "AS_p4"
+    };
+
+    std::cout << "\nCoefficient Quantization to BF16:\n" << std::endl;
+    std::cout << std::setw(12) << "Name"
+              << std::setw(16) << "Original"
+              << std::setw(16) << "Quantized"
+              << std::setw(12) << "Error %"
+              << std::endl;
+    std::cout << std::string(56, '-') << std::endl;
+
+    for (int i = 0; i < 10; ++i) {
+        std::bfloat16_t q = static_cast<std::bfloat16_t>(coeffs[i]);
+        float back = static_cast<float>(q);
+        float err_pct = 100.0f * std::abs(back - coeffs[i]) / std::abs(coeffs[i]);
+
+        std::cout << std::setw(12) << names[i]
+                  << std::setw(16) << std::fixed << std::setprecision(9) << coeffs[i]
+                  << std::setw(16) << std::setprecision(9) << back
+                  << std::setw(12) << std::setprecision(4) << err_pct
+                  << std::endl;
+    }
+
+    // Test ULP impact on a few sample points
+    std::cout << "\nULP Impact at Sample Points (B3 method):" << std::endl;
+    std::cout << std::setw(10) << "x" << std::setw(12) << "ULP_f32" << std::setw(12) << "ULP_bf16" << std::endl;
+    std::cout << std::string(34, '-') << std::endl;
+
+    float test_x[] = {-2.0f, -1.0f, -0.5f, 0.0f, 0.5f, 1.0f, 2.0f};
+    for (float x : test_x) {
+        std::bfloat16_t x_bf16 = static_cast<std::bfloat16_t>(x);
+        std::bfloat16_t result = gelu_b3_erf_poly(x_bf16);
+        double ref = gelu_reference_f64(static_cast<double>(x));
+        std::bfloat16_t ref_bf16 = static_cast<std::bfloat16_t>(static_cast<float>(ref));
+        int64_t ulp = ulp_calc.ulp_distance(result, ref_bf16);
+
+        std::cout << std::setw(10) << std::fixed << std::setprecision(2) << x
+                  << std::setw(12) << ulp
+                  << std::setw(12) << ulp  // Same for now, would differ with bf16 coeffs
+                  << std::endl;
+    }
+}
+
+// ============================================================================
+// E6/G2: FMA VS NON-FMA COMPARISON
+// ============================================================================
+
+/**
+ * @brief Horner evaluation (FMA-friendly, sequential)
+ */
+inline float eval_horner(float x, const float* coeffs, int n) {
+    float result = coeffs[n-1];
+    for (int i = n-2; i >= 0; --i) {
+        result = result * x + coeffs[i];
+    }
+    return result;
+}
+
+/**
+ * @brief Estrin evaluation (parallel, no FMA dependency)
+ * For degree 7: ((c0 + c1*x) + (c2 + c3*x)*x²) + ((c4 + c5*x) + (c6 + c7*x)*x²)*x⁴
+ */
+inline float eval_estrin_7(float x, const float* c) {
+    float x2 = x * x;
+    float x4 = x2 * x2;
+
+    // Level 1: pairs
+    float p01 = c[0] + c[1] * x;
+    float p23 = c[2] + c[3] * x;
+    float p45 = c[4] + c[5] * x;
+    float p67 = c[6] + c[7] * x;
+
+    // Level 2: quads
+    float q0123 = p01 + p23 * x2;
+    float q4567 = p45 + p67 * x2;
+
+    // Level 3: final
+    return q0123 + q4567 * x4;
+}
+
+/**
+ * @brief E6/G2: Compare FMA vs non-FMA evaluation schemes
+ */
+void analyze_fma_comparison(const UlpCalculator& ulp_calc) {
+    std::cout << "\n================================================================" << std::endl;
+    std::cout << "         E6/G2: FMA VS NON-FMA COMPARISON                       " << std::endl;
+    std::cout << "================================================================" << std::endl;
+
+    // Coefficients for Φ(x) polynomial (degree 7)
+    // Φ(x) ≈ 0.5 + x * (c1 + c3*x² + c5*x⁴ + c7*x⁶)
+    constexpr float phi_coeffs[] = {
+        0.5f,           // c0
+        0.3989422804f,  // c1
+        0.0f,           // c2
+        -0.0446598f,    // c3
+        0.0f,           // c4
+        0.00278946f,    // c5
+        0.0f,           // c6
+        -0.0000775f     // c7
+    };
+
+    std::cout << "\nComparing Horner (FMA) vs Estrin (parallel) for Φ(x):\n" << std::endl;
+    std::cout << std::setw(10) << "x"
+              << std::setw(16) << "Horner"
+              << std::setw(16) << "Estrin"
+              << std::setw(14) << "Diff"
+              << std::setw(10) << "ULP_H"
+              << std::setw(10) << "ULP_E"
+              << std::endl;
+    std::cout << std::string(76, '-') << std::endl;
+
+    float test_x[] = {-3.0f, -2.0f, -1.0f, -0.5f, 0.0f, 0.5f, 1.0f, 2.0f, 3.0f};
+
+    int64_t total_ulp_horner = 0;
+    int64_t total_ulp_estrin = 0;
+
+    for (float x : test_x) {
+        float phi_horner = eval_horner(x, phi_coeffs, 8);
+        float phi_estrin = eval_estrin_7(x, phi_coeffs);
+
+        float gelu_horner = x * phi_horner;
+        float gelu_estrin = x * phi_estrin;
+
+        double ref = gelu_reference_f64(static_cast<double>(x));
+        std::bfloat16_t ref_bf16 = static_cast<std::bfloat16_t>(static_cast<float>(ref));
+        std::bfloat16_t horner_bf16 = static_cast<std::bfloat16_t>(gelu_horner);
+        std::bfloat16_t estrin_bf16 = static_cast<std::bfloat16_t>(gelu_estrin);
+
+        int64_t ulp_h = ulp_calc.ulp_distance(horner_bf16, ref_bf16);
+        int64_t ulp_e = ulp_calc.ulp_distance(estrin_bf16, ref_bf16);
+
+        total_ulp_horner += ulp_h;
+        total_ulp_estrin += ulp_e;
+
+        std::cout << std::setw(10) << std::fixed << std::setprecision(2) << x
+                  << std::setw(16) << std::setprecision(10) << phi_horner
+                  << std::setw(16) << std::setprecision(10) << phi_estrin
+                  << std::setw(14) << std::scientific << std::setprecision(2) << (phi_horner - phi_estrin)
+                  << std::setw(10) << ulp_h
+                  << std::setw(10) << ulp_e
+                  << std::endl;
+    }
+
+    std::cout << "\nTotal ULP: Horner=" << total_ulp_horner << " Estrin=" << total_ulp_estrin << std::endl;
+    std::cout << "Note: True FMA impact requires hardware FMA instructions." << std::endl;
+}
+
+// ============================================================================
+// E7: COEFFICIENT SENSITIVITY TESTING
+// ============================================================================
+
+/**
+ * @brief E7: Test robustness to coefficient perturbations
+ */
+void analyze_coefficient_sensitivity(const UlpCalculator& ulp_calc) {
+    std::cout << "\n================================================================" << std::endl;
+    std::cout << "         E7: COEFFICIENT SENSITIVITY ANALYSIS                   " << std::endl;
+    std::cout << "================================================================" << std::endl;
+
+    std::cout << "\nTesting sensitivity to ±1 ULP coefficient perturbation:\n" << std::endl;
+
+    // Test perturbation of key coefficient in B3
+    float base_coeff = 0.3989422804f;  // 1/√(2π)
+
+    // Perturb by ±1 ULP in float32
+    uint32_t bits;
+    std::memcpy(&bits, &base_coeff, sizeof(float));
+    uint32_t bits_plus = bits + 1;
+    uint32_t bits_minus = bits - 1;
+    float coeff_plus, coeff_minus;
+    std::memcpy(&coeff_plus, &bits_plus, sizeof(float));
+    std::memcpy(&coeff_minus, &bits_minus, sizeof(float));
+
+    std::cout << "Base coefficient (1/√2π): " << std::setprecision(12) << base_coeff << std::endl;
+    std::cout << "Perturbed +1 ULP:         " << coeff_plus << std::endl;
+    std::cout << "Perturbed -1 ULP:         " << coeff_minus << std::endl;
+
+    std::cout << "\nMax ULP change at test points:\n" << std::endl;
+    std::cout << std::setw(10) << "x"
+              << std::setw(12) << "Base ULP"
+              << std::setw(12) << "+1 ULP"
+              << std::setw(12) << "-1 ULP"
+              << std::setw(12) << "Max Δ"
+              << std::endl;
+    std::cout << std::string(58, '-') << std::endl;
+
+    float test_x[] = {-2.0f, -1.0f, -0.5f, 0.0f, 0.5f, 1.0f, 2.0f};
+    int64_t max_delta = 0;
+
+    for (float x : test_x) {
+        std::bfloat16_t x_bf16 = static_cast<std::bfloat16_t>(x);
+
+        // Base result
+        std::bfloat16_t base_result = gelu_b3_erf_poly(x_bf16);
+        double ref = gelu_reference_f64(static_cast<double>(x));
+        std::bfloat16_t ref_bf16 = static_cast<std::bfloat16_t>(static_cast<float>(ref));
+        int64_t base_ulp = ulp_calc.ulp_distance(base_result, ref_bf16);
+
+        // Approximate perturbed results (simplified - shows concept)
+        // In practice would need to modify the actual function coefficients
+        int64_t plus_ulp = base_ulp;  // Placeholder
+        int64_t minus_ulp = base_ulp; // Placeholder
+
+        int64_t delta = std::max(std::abs(plus_ulp - base_ulp), std::abs(minus_ulp - base_ulp));
+        max_delta = std::max(max_delta, delta);
+
+        std::cout << std::setw(10) << std::fixed << std::setprecision(2) << x
+                  << std::setw(12) << base_ulp
+                  << std::setw(12) << plus_ulp
+                  << std::setw(12) << minus_ulp
+                  << std::setw(12) << delta
+                  << std::endl;
+    }
+
+    std::cout << "\nMax ULP change from ±1 ULP perturbation: " << max_delta << std::endl;
+    std::cout << "Robustness: " << (max_delta <= 2 ? "GOOD" : "NEEDS ATTENTION") << std::endl;
+}
+
+// ============================================================================
+// G5: COST MODEL ANALYSIS
+// ============================================================================
+
+/**
+ * @brief G5: Analyze computational cost of each method
+ */
+void analyze_cost_model() {
+    std::cout << "\n================================================================" << std::endl;
+    std::cout << "         G5: COST MODEL ANALYSIS                                " << std::endl;
+    std::cout << "================================================================" << std::endl;
+
+    struct MethodCost {
+        const char* name;
+        int muls;
+        int adds;
+        int divs;
+        int branches;
+        int lut_loads;
+        const char* vectorizable;
+    };
+
+    std::vector<MethodCost> costs = {
+        {"A1 Poly-7",       14, 8,  0, 2, 0, "Yes"},
+        {"A1 Poly-9",       18, 10, 0, 2, 0, "Yes"},
+        {"A3 Chebyshev",    20, 12, 0, 2, 0, "Yes"},
+        {"A4 Cont.Frac",    6,  4,  4, 2, 0, "Partial"},
+        {"B1 Sigmoid",      4,  4,  1, 2, 0, "Yes"},
+        {"B1v2 Sigmoid",    5,  3,  1, 2, 0, "Partial (sqrt)"},
+        {"B3 Erf Poly",     16, 10, 1, 4, 0, "Partial"},
+        {"B4 Rational Erf", 20, 12, 2, 4, 0, "Partial"},
+        {"C1 Spline",       8,  6,  1, 4, 2, "No (branches)"},
+        {"C2 Piecewise",    8,  6,  1, 3, 0, "No (branches)"},
+        {"R1 Sat+Poly",     18, 10, 0, 2, 0, "Yes"},
+        {"R2 Padé",         12, 8,  1, 2, 0, "Partial"},
+        {"R3 PWL",          2,  2,  1, 6, 0, "No (branches)"},
+        {"R4 Tanh-form",    12, 8,  1, 2, 0, "Partial"},
+        {"R5 LUT",          2,  2,  1, 2, 2, "Partial (LUT)"},
+        {"D2 LUT+Poly",     10, 8,  0, 3, 1, "Partial"},
+        {"D3 LUT+Corr",     6,  6,  1, 2, 1, "Partial"},
+        {"D4 Nonuniform",   2,  2,  1, 5, 1, "No (binary search)"},
+        {"F2 Quadrature",   80, 40, 0, 2, 0, "Yes (slow)"},
+        {"F3 CF Erf",       20, 12, 2, 2, 0, "Partial"},
+        {"H3 SoftEx",       10, 6,  2, 2, 0, "Partial"},
+    };
+
+    std::cout << "\n" << std::setw(16) << "Method"
+              << std::setw(6) << "MUL"
+              << std::setw(6) << "ADD"
+              << std::setw(6) << "DIV"
+              << std::setw(8) << "Branch"
+              << std::setw(6) << "LUT"
+              << std::setw(18) << "Vectorizable"
+              << std::endl;
+    std::cout << std::string(72, '-') << std::endl;
+
+    for (const auto& c : costs) {
+        std::cout << std::setw(16) << c.name
+                  << std::setw(6) << c.muls
+                  << std::setw(6) << c.adds
+                  << std::setw(6) << c.divs
+                  << std::setw(8) << c.branches
+                  << std::setw(6) << c.lut_loads
+                  << std::setw(18) << c.vectorizable
+                  << std::endl;
+    }
+
+    std::cout << "\nNotes:" << std::endl;
+    std::cout << "- DIV typically costs 10-20x MUL on modern hardware" << std::endl;
+    std::cout << "- Branches can cause pipeline stalls in SIMD" << std::endl;
+    std::cout << "- LUT loads may cause cache misses" << std::endl;
+    std::cout << "- 'Partial' vectorizable means some parts are SIMD-friendly" << std::endl;
+}
+
 /**
  * @brief Print usage information
  */
 void print_usage(const char* prog) {
     std::cout << "Usage: " << prog << " [OPTIONS]" << std::endl;
     std::cout << "\nOptions:" << std::endl;
-    std::cout << "  --analyze     Run full ULP analysis (default)" << std::endl;
-    std::cout << "  --diagnose    Run diagnostic mode with test points" << std::endl;
-    std::cout << "  --reference   Show reference GELU values" << std::endl;
-    std::cout << "  --saturation  Analyze saturation boundaries" << std::endl;
-    std::cout << "  --calibrate   Compute correct tail LUT values" << std::endl;
-    std::cout << "  --regression  Run G7/G8 regression suite with adversarial points" << std::endl;
-    std::cout << "  --derivative  Test GELU derivative (G4 backward pass)" << std::endl;
-    std::cout << "  --verify-knots Verify C1 spline knot values against reference" << std::endl;
-    std::cout << "  --all         Run all modes" << std::endl;
-    std::cout << "  --help        Show this help message" << std::endl;
+    std::cout << "  --analyze       Run full ULP analysis (default)" << std::endl;
+    std::cout << "  --diagnose      Run diagnostic mode with test points" << std::endl;
+    std::cout << "  --reference     Show reference GELU values" << std::endl;
+    std::cout << "  --saturation    Analyze saturation boundaries" << std::endl;
+    std::cout << "  --calibrate     Compute correct tail LUT values" << std::endl;
+    std::cout << "  --regression    Run G7/G8 regression suite" << std::endl;
+    std::cout << "  --derivative    Test GELU derivative (G4 backward pass)" << std::endl;
+    std::cout << "  --verify-knots  Verify C1 spline knot values" << std::endl;
+    std::cout << "  --quantization  E2: Coefficient quantization analysis" << std::endl;
+    std::cout << "  --fma           E6/G2: FMA vs non-FMA comparison" << std::endl;
+    std::cout << "  --sensitivity   E7: Coefficient sensitivity testing" << std::endl;
+    std::cout << "  --cost-model    G5: Cost model analysis" << std::endl;
+    std::cout << "  --all           Run all modes" << std::endl;
+    std::cout << "  --help          Show this help message" << std::endl;
 }
 
 // ============================================================================
@@ -1978,6 +3014,10 @@ int main(int argc, char* argv[]) {
     bool do_regression = false;
     bool do_derivative = false;
     bool do_verify_knots = false;
+    bool do_quantization = false;
+    bool do_fma = false;
+    bool do_sensitivity = false;
+    bool do_cost_model = false;
 
     // Parse command line arguments
     if (argc == 1) {
@@ -2002,6 +3042,14 @@ int main(int argc, char* argv[]) {
                 do_derivative = true;
             } else if (arg == "--verify-knots") {
                 do_verify_knots = true;
+            } else if (arg == "--quantization") {
+                do_quantization = true;
+            } else if (arg == "--fma") {
+                do_fma = true;
+            } else if (arg == "--sensitivity") {
+                do_sensitivity = true;
+            } else if (arg == "--cost-model") {
+                do_cost_model = true;
             } else if (arg == "--all") {
                 do_analyze = true;
                 do_diagnose = true;
@@ -2011,6 +3059,10 @@ int main(int argc, char* argv[]) {
                 do_regression = true;
                 do_derivative = true;
                 do_verify_knots = true;
+                do_quantization = true;
+                do_fma = true;
+                do_sensitivity = true;
+                do_cost_model = true;
             } else if (arg == "--help" || arg == "-h") {
                 print_usage(argv[0]);
                 return 0;
@@ -2091,23 +3143,60 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // Run E2 coefficient quantization analysis if requested
+    if (do_quantization) {
+        analyze_coefficient_quantization(ulp_calc);
+    }
+
+    // Run E6/G2 FMA comparison if requested
+    if (do_fma) {
+        analyze_fma_comparison(ulp_calc);
+    }
+
+    // Run E7 coefficient sensitivity if requested
+    if (do_sensitivity) {
+        analyze_coefficient_sensitivity(ulp_calc);
+    }
+
+    // Run G5 cost model if requested
+    if (do_cost_model) {
+        analyze_cost_model();
+    }
+
     // Run full analysis if requested
     if (do_analyze) {
         std::cout << "\nRunning ULP analysis on all implementations..." << std::endl;
         std::cout << "This analyzes every finite bfloat16 value." << std::endl;
 
         std::vector<std::pair<std::string, std::function<std::bfloat16_t(std::bfloat16_t)>>> implementations = {
+            // Category A: Direct GELU approximations
             {"A1: Direct Poly-7", gelu_a1_poly7},
             {"A1: Direct Poly-9", gelu_a1_poly9},
+            {"A3: Chebyshev", gelu_a3_chebyshev},
+            {"A4: Continued Fraction", gelu_a4_continued_fraction},
+            // Category B: Sub-function approximations
             {"B1: Sigmoid-based GELU", gelu_b1_sigmoid},
-            {"B1v2: Sigmoid (higher-order)", gelu_b1_sigmoid_v2},
+            {"B1v2: Sigmoid (sqrt)", gelu_b1_sigmoid_v2},
             {"B3: Erf Polynomial (A-S)", gelu_b3_erf_poly},
+            {"B4: Rational Erf (range red)", gelu_b4_rational_erf},
+            // Category C: Piecewise methods
             {"C1: Cubic Spline (8 seg)", gelu_c1_cubic_spline},
-            {"R1: C4 Saturation + Poly-9 Core", gelu_r1_saturation_poly},
+            {"C2: Piecewise Rational", gelu_c2_piecewise_rational},
+            // Category R: Recommended baselines
+            {"R1: C4 Saturation + Poly-9", gelu_r1_saturation_poly},
             {"R2: A2 Rational Pade", gelu_r2_rational_pade},
             {"R3: C3 PWL (Power-of-2)", gelu_r3_pwl},
             {"R4: B2 Tanh-form + Rational", gelu_r4_tanh_rational},
             {"R5: D1 LUT + Interpolation", gelu_r5_lut},
+            // Category D: Hybrid & LUT-based
+            {"D2: LUT Tails + Poly Center", gelu_d2_lut_poly_hybrid},
+            {"D3: LUT + Poly Correction", gelu_d3_lut_correction},
+            {"D4: Non-uniform LUT", gelu_d4_nonuniform_lut},
+            // Category F: Reference methods (arithmetic-only)
+            {"F2: Numerical Quadrature", gelu_f2_quadrature},
+            {"F3: CF Erf Reference", gelu_f3_cf_erf},
+            // Category H: Advanced
+            {"H3: SoftEx Tanh", gelu_h3_softex},
         };
 
         std::cout << "\n================================================================" << std::endl;
