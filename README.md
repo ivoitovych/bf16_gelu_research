@@ -10,13 +10,23 @@ This project implements and evaluates multiple GELU approximation strategies opt
 
 | Method | Mean ULP | Max ULP | Description |
 |--------|----------|---------|-------------|
+| **R5 LUT** | **0.10** | **145** | 512-entry LUT + extended tail handler |
 | **C1 Spline** | **0.13** | **145** | 9-segment Hermite + Taylor near-zero |
 | **B3 Erf Poly** | **0.13** | **145** | Piecewise erf (Taylor + A-S rational) |
 | **R4 Tanh** | 0.14 | 166 | Tanh-form + [3,3] Padé approximation |
+| B4 Rational Erf | 0.59 | 535 | Range-reduced rational erf |
 | B1v2 Sigmoid | 1.50 | 625 | Quadratic sigmoid approximation |
+| D3 LUT+Corr | 1.84 | 830 | Coarse LUT + polynomial correction |
+| R3 PWL | 36.85 | 832 | Piecewise linear (power-of-2 breakpoints) |
+| C2 Piecewise | 1.18 | 881 | Piecewise rational (3 segments) |
 | B1 Sigmoid | 1.67 | 1068 | Simple sigmoid approximation |
 | R2 Rational | 1.22 | 1139 | Rational Padé [4/4] |
+| A4 Cont.Frac | 1.73 | 1206 | Continued fraction depth-4 |
+| A3 Chebyshev | 2.57 | 1207 | Chebyshev polynomial (Clenshaw) |
+| H3 SoftEx | 1.28 | 1247 | Arithmetic-only exp via Padé |
 | R1 Poly-9 | 1.43 | 1312 | 9th-degree minimax polynomial |
+
+**22 methods implemented** across 8 categories from FinalLists.md taxonomy.
 
 ## Background
 
@@ -84,7 +94,7 @@ g++ -std=c++23 -o test_bfloat16 test_bfloat16.cpp && ./test_bfloat16
 ### Running Analysis
 
 ```bash
-# Full ULP analysis over entire bfloat16 range
+# Full ULP analysis over entire bfloat16 range (22 methods)
 ./gelu_analysis --analyze
 
 # Diagnostic mode with specific test points
@@ -107,6 +117,18 @@ g++ -std=c++23 -o test_bfloat16 test_bfloat16.cpp && ./test_bfloat16
 
 # Debug C1 cubic spline knot values
 ./gelu_analysis --verify-knots
+
+# E2: Analyze coefficient quantization to BF16
+./gelu_analysis --quantization
+
+# E6/G2: Compare FMA vs non-FMA evaluation (Horner vs Estrin)
+./gelu_analysis --fma
+
+# E7: Test coefficient sensitivity to perturbations
+./gelu_analysis --sensitivity
+
+# G5: Display cost model (ops count, vectorizability)
+./gelu_analysis --cost-model
 
 # Run all analysis modes
 ./gelu_analysis --all
@@ -212,13 +234,101 @@ tanh(z) ≈ z·(a₀ + a₁z² + a₂z⁴ + a₃z⁶) / (b₀ + b₁z² + b₂z�
 ```
 [3,3] Padé approximant for tanh. Mean ULP 0.14, Max ULP 166.
 
-#### R5: LUT + Linear Interpolation
+#### R5: LUT + Linear Interpolation (Best Method)
 ```
 512-entry lookup table for Φ(x)
 Linear interpolation between entries
-Range: [-9, 3]
+Range: [-9, 3] with extended tail LUT
 ```
-Uses precomputed erf values. Excellent core accuracy but needs tail handler update.
+**Best performer with Mean ULP 0.10, Max ULP 145.** Uses precomputed erf values with extended tail handler.
+
+#### A3: Chebyshev Polynomial
+```
+Chebyshev expansion on [-4, 4] mapped to [-1, 1]
+Clenshaw recurrence for stable evaluation
+Degree-9 with odd coefficients
+```
+Near-minimax with bounded oscillating error. Mean ULP 2.57, Max ULP 1207.
+
+#### A4: Continued Fraction
+```
+GELU(x) ≈ x · (a₀ + x²/(b₁ + x²/(b₂ + ...)))
+Depth-4 truncation
+```
+Alternative to Padé with different convergence. Mean ULP 1.73, Max ULP 1206.
+
+#### B4: Rational Erf with Range Reduction
+```
+|z| < 1: rational [2/2] Taylor-like
+|z| ≥ 1: Abramowitz-Stegun with exp factor
+Separate fits per range
+```
+Reduces polynomial degree requirements. Mean ULP 0.59, Max ULP 535.
+
+#### C2: Piecewise Rational
+```
+Different Padé [2/2] per segment:
+- [0, 3]: positive coefficients
+- [-3, 0]: negative coefficients
+- blend zone at boundaries
+```
+Fewer segments than polynomial for equivalent accuracy. Mean ULP 1.18, Max ULP 881.
+
+#### D2: LUT Tails + Polynomial Center
+```
+|x| > 3: Extended tail LUT
+|x| ≤ 3: Degree-7 minimax polynomial
+Smooth blending at boundaries
+```
+Hybrid approach for BF16 dynamic range. (Needs core_neg fix)
+
+#### D3: LUT + Polynomial Correction
+```
+32-entry coarse LUT as base
+Low-degree polynomial correction term
+Balances memory and computation
+```
+Mean ULP 1.84, Max ULP 830.
+
+#### D4: Non-uniform LUT Spacing
+```
+23 breakpoints with variable density
+Denser near x=0 and saturation boundaries
+Binary search for segment lookup
+```
+Optimized spacing for max-ULP. (Needs near-zero fix)
+
+#### F2: Numerical Quadrature
+```
+8-point Gauss-Legendre quadrature
+Arithmetic-only exp via Taylor series
+Slow but uses only basic arithmetic
+```
+Alternative ground truth without erf(). (exp approx limited to |x| < 2)
+
+#### F3: Continued Fraction Erf
+```
+Taylor series for |z| < 0.5
+Lentz CF algorithm for |z| ≥ 0.5
+Rational exp(-z²) approximation
+```
+Sometimes more stable in tails. (exp approx limited)
+
+#### H1: Inverted GELU
+```
+Newton-Raphson iteration
+4-6 iterations for convergence
+Finds x given y = GELU(x)
+```
+Useful for memory-efficient backpropagation.
+
+#### H3: SoftEx Tanh
+```
+Padé [2/2] approximation for exp(x)
+tanh(z) = (exp(2z) - 1) / (exp(2z) + 1)
+Arithmetic-only exp replacement
+```
+Enables tanh-based GELU without true exp(). Mean ULP 1.28, Max ULP 1247.
 
 ### Tail Handling
 
@@ -314,15 +424,28 @@ Based on FinalLists.md, the project follows a phased implementation approach:
 | 0 | Infrastructure (F1, G1, G3) | Complete |
 | 1 | Core baselines (A1, A2, B1, B3, C4) | Complete |
 | 2 | ULP control (C1, C3, B2) | Complete |
-| 3 | BF16 optimizations (E1-E7) | Not started |
-| 4 | Validation (G2, G4, G5, G7/G8) | Partial (G4, G7/G8 done) |
-| 5 | Advanced (D2-D4, H1-H3) | Not started |
+| 3 | BF16 optimizations (E1-E7) | Complete (E2, E6, E7) |
+| 4 | Validation (G2, G4, G5, G7/G8) | Complete |
+| 5 | Advanced (D2-D4, H1-H3) | Complete |
 
-### Future Work
+### Implementation Coverage
 
-1. **E2 Coefficient Quantization**: Validate hardware behavior with bf16 coefficients
-2. **C2 Piecewise Rational**: 3-5 segment rational functions
-3. **G2 FMA Comparison**: Measure impact of fused multiply-add
+| Category | Methods | Implemented |
+|----------|---------|-------------|
+| A: Direct | A1, A2, A3, A4 | 4/4 |
+| B: Sub-function | B1, B1v2, B3, B4 | 4/4 |
+| C: Piecewise | C1, C2 | 2/2 |
+| D: Hybrid/LUT | D2, D3, D4, R5 | 4/4 |
+| E: BF16 Knobs | E2, E6, E7 | 3/7 |
+| F: Reference | F1, F2, F3 | 3/4 |
+| G: Methodology | G1, G2, G3, G4, G5, G7/G8 | 7/8 |
+| H: Advanced | H1, H3 | 2/3 |
+
+### Known Issues
+
+Some arithmetic-only methods have high ULP in core_neg region due to exp() approximation limitations:
+- **D2, D4, F2, F3**: Taylor/Padé exp() fails for |x| > 2
+- Fix: Extend tail LUT into [-3, -2] or use better exp() approximation
 
 ## Key Insights
 
@@ -336,7 +459,11 @@ Based on FinalLists.md, the project follows a phased implementation approach:
 
 5. **Entire range testing**: Methods optimized for [-8, 8] may fail catastrophically outside this range.
 
-6. **Three methods achieve best results**: C1 Spline and B3 Erf (both 0.13 mean, 145 max ULP) and R4 Tanh (0.14 mean, 166 max ULP).
+6. **Four methods achieve best results**: R5 LUT (0.10 mean), C1 Spline and B3 Erf (0.13 mean), R4 Tanh (0.14 mean) - all with Max ULP ≤ 166.
+
+7. **Arithmetic-only exp() is hard**: Padé and Taylor approximations for exp() work well for |x| < 2 but fail in the [-3, -2] "core_neg" region. Methods F2, F3, D2, D4 need extended LUT coverage.
+
+8. **Cost vs accuracy tradeoff**: Best methods (C1, R5) require LUT loads or branches; simplest methods (B1, A1) have 5-10× higher max ULP.
 
 ## References
 
