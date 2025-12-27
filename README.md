@@ -435,16 +435,28 @@ Based on FinalLists.md, the project follows a phased implementation approach:
 
 ### Implementation Coverage
 
-| Category | Methods | Implemented |
-|----------|---------|-------------|
-| A: Direct | A1, A2, A3, A4 | 4/4 |
-| B: Sub-function | B1, B1v2, B3, B4 | 4/4 |
-| C: Piecewise | C1, C2 | 2/2 |
-| D: Hybrid/LUT | D2, D3, D4, R5 | 4/4 |
-| E: BF16 Knobs | E2, E6, E7 | 3/7 |
-| F: Reference | F1, F2, F3 | 3/4 |
-| G: Methodology | G1, G2, G3, G4, G5, G7/G8 | 7/8 |
-| H: Advanced | H1, H3 | 2/3 |
+**Overall: 35/40 methods (87.5%)**
+
+| Category | Methods | Implemented | Details |
+|----------|---------|-------------|---------|
+| A: Direct | 4 | 4/4 ✓ | A1 (poly-7,9), A2 ([4/4]), A3, A4 |
+| B: Sub-function | 4 | 4/4 ✓ | B1, B1v2, B2/R4, B3, B4 |
+| C: Piecewise | 5 | 4/5 | C1, C2, C3/R3, C4/R1 (C5 EPSS missing) |
+| D: Hybrid/LUT | 4 | 4/4 ✓ | D1/R5, D2, D3, D4 |
+| E: BF16 Knobs | 8 | 5/8 | E1, E2, E4, E6, E7 (E3, E5, E8 missing) |
+| F: Reference | 4 | 4/4 ✓ | F1, F2, F3, F4 (in B3) |
+| G: Methodology | 8 | 8/8 ✓ | G1-G8 complete |
+| H: Advanced | 3 | 2/3 | H1, H3 (H2 hardware-specific) |
+
+### Remaining Gaps
+
+| ID | Method | Priority | Notes |
+|----|--------|----------|-------|
+| C5 | EPSS knot refinement | Low | Optimization technique |
+| E3 | Range-Scaled Approximation | Low | Theoretical, marginal benefit |
+| E5 | Denormal Policy Testing | Medium | Edge case verification |
+| E8 | FTZ Policy Testing | Medium | Same as E5 |
+| H2 | GELU-Softmax Unit | Low | Hardware-specific, out of scope |
 
 ### All Methods Fixed
 
