@@ -21,6 +21,8 @@ g++ -std=c++23 -O2 -o ulp_calculator ulp_calculator.cpp
 ./gelu_analysis --analyze    # Full ULP analysis
 ./gelu_analysis --diagnose   # Diagnostic mode
 ./gelu_analysis --reference  # Show reference values
+./gelu_analysis --saturation # Analyze saturation boundaries
+./gelu_analysis --calibrate  # Compute tail LUT values
 ./gelu_analysis --all        # All modes
 ```
 
@@ -56,8 +58,8 @@ g++ -std=c++23 -O2 -o ulp_calculator ulp_calculator.cpp
 | 1 | R1/C4 | Saturation + poly-9 core | ✓ Improved coefficients |
 | 1 | R2/A2 | Rational Padé | ✓ Improved coefficients |
 | 1 | R3/C3 | Piecewise linear (ISPA) | ✓ Optimized segments |
-| 1 | R4/B2 | Tanh-form + [3,3] Padé tanh | ✓ Improved coefficients |
-| 1 | R5/D1 | LUT (512 entries) + interpolation | ✓ Best performer |
+| 1 | R4/B2 | Tanh-form + [3,3] Padé tanh | ✓ **Best performer** (0.61 mean ULP) |
+| 1 | R5/D1 | LUT (512 entries) + interpolation | ✓ Complete |
 
 ### Not Yet Implemented
 
@@ -85,17 +87,17 @@ g++ -std=c++23 -O2 -o ulp_calculator ulp_calculator.cpp
 
 | Method | Max ULP | Mean ULP | P99 | Notes |
 |--------|---------|----------|-----|-------|
-| **B1v2 Sigmoid** | 11550 | **11.35** | 40 | **Best mean ULP** |
-| B1 Sigmoid | 11550 | 12.51 | 19 | Simple, good baseline |
-| R2 Rational | 11550 | 12.44 | **4** | **Best P99** |
-| R5 LUT | 13215 | 15.02 | 0 | Best core accuracy |
-| R1 Poly-9 | 13466 | 20.18 | 2 | Good all-around |
-| R4 Tanh | 14850 | 30.98 | 0 | Best core, weak tails |
-| R3 PWL | 11550 | 45.41 | 98 | High near-zero error |
+| **R4 Tanh** | 9904 | **0.61** | 0 | **Best mean ULP** - tanh-form + [3,3] Padé |
+| R2 Rational | 9904 | 1.69 | **2** | **Best P99** - rational Padé |
+| R1 Poly-9 | 9904 | 1.90 | 1 | Polynomial core |
+| B1v2 Sigmoid | 9904 | 1.97 | 38 | Quadratic sigmoid |
+| B1 Sigmoid | 9904 | 2.14 | 19 | Simple sigmoid |
+| R5 LUT | 13215 | 15.02 | 0 | LUT (needs tail handler update) |
+| R3 PWL | 9904 | 37.32 | 98 | High near-zero error |
 
-**Saturation thresholds**: x ≥ 4 → x, x ≤ -7 → 0 (extended from -5 to reduce max-ULP)
+**Saturation thresholds**: x ≥ 3 → x, x ≤ -9 → 0 (with specialized tail LUT from -8.5 to -3.5)
 
-**Max-ULP analysis**: The 11550-14850 max-ULP comes from the negative saturation boundary (x=-7). GELU(-7)≈-5.5e-11, which rounds to a tiny but non-zero bf16 value, while we return 0.
+**Max-ULP analysis**: The 9904 max-ULP comes from the extreme negative tail (x=-8.375). At this point, GELU values are ~1e-15, and linear interpolation in our tail LUT doesn't perfectly match the exponential decay. Further improvement requires finer LUT resolution or accepting this as a hardware limitation of bf16.
 
 ## Quick Reference
 
@@ -103,14 +105,19 @@ g++ -std=c++23 -O2 -o ulp_calculator ulp_calculator.cpp
 GELU(x) = x · Φ(x)  where  Φ(x) = 0.5(1 + erf(x/√2))
 
 Saturation thresholds (asymmetric):
-  x ≥ 4  → GELU(x) ≈ x    (Φ(4) = 0.99997)
-  x ≤ -7 → GELU(x) ≈ 0    (Φ(-7) ≈ 1.3e-12)
+  x ≥ 3  → GELU(x) ≈ x    (Φ(3) = 0.99865)
+  x ≤ -9 → GELU(x) ≈ 0    (bf16(GELU(-9)) = -0)
+
+Tail handling (x ∈ [-8.5, -3.5]):
+  - LUT with 10 calibration points (0.5 step)
+  - Linear interpolation between points
+  - Handles exponential decay that polynomial/rational approximations miss
 
 Key approximations:
+  R4 Tanh:      GELU(x) ≈ 0.5x(1 + tanh(0.7979(x + 0.0447x³))) [BEST: 0.61 mean ULP]
+  tanh approx:  tanh(z) ≈ z·(1 + 0.128z² + ...)/(1 + 0.462z² + ...) [3,3] Padé
   B1 sigmoid:   GELU(x) ≈ x · σ(1.702x), σ(z) ≈ 0.5 + z/(2(1+|z|))
   B1v2 sqrt:    GELU(x) ≈ x · [0.5 + 0.5·z/√(1+z²)], z = 1.702x
-  Tanh-form:    GELU(x) ≈ 0.5x(1 + tanh(0.7979(x + 0.0447x³)))
-  tanh approx:  tanh(z) ≈ z·(1 + 0.128z² + ...)/(1 + 0.462z² + ...)
 ```
 
 ## G3 Multi-Region Analysis
@@ -119,19 +126,22 @@ Regions: near_zero (|x|<0.5), core_pos/neg (0.5≤|x|<3), tail_pos/neg (|x|≥3)
 
 | Method | near_zero | core_pos | core_neg | tail_pos | tail_neg |
 |--------|-----------|----------|----------|----------|----------|
-| B1v2 | 0.93 | 13.91 | 129.44 | 0.01 | 41.05 |
-| R2 | 0.00 | 5.02 | 126.52 | 0.10 | 47.46 |
-| R5 LUT | 0.00 | 0.00 | 0.03 | 0.00 | 60.57 |
+| **R4 Tanh** | 0.00 | 0.03 | **1.75** | 0.00 | 2.43 |
+| R2 Rational | 0.00 | 5.02 | 126.52 | 0.00 | 4.19 |
+| R1 Poly-9 | 0.00 | 7.38 | 150.87 | 0.00 | 4.52 |
+| B1v2 | 0.93 | 13.91 | 129.44 | 0.00 | 3.27 |
+| R5 LUT | 0.00 | 0.00 | 0.03 | 0.00 | 60.56 |
 
-(Mean ULP per region; tail_neg dominates max-ULP due to saturation boundary)
+(Mean ULP per region. R4 excels in core_neg due to accurate tanh approximation.)
 
 ## Design Decisions
 
 1. **Type punning**: Use `std::memcpy()` only (no reinterpret_cast, no unions)
 2. **ULP indexing**: +0 and -0 share same index; NaN/Inf excluded (65280 valid values)
-3. **Saturation**: Asymmetric thresholds (4, -7) extended for better max-ULP
+3. **Saturation**: Asymmetric thresholds (3, -9) with specialized tail LUT for [-8.5, -3.5]
 4. **Internal precision**: float32 for calculations, bfloat16 for I/O
 5. **Entire range**: Unlike FinalLists.md's [-8,8], we test all 65280 bf16 values
+6. **Tail handling**: LUT-based interpolation for negative tail where approximations fail
 
 ## Code Guidelines
 
@@ -139,6 +149,7 @@ Regions: near_zero (|x|<0.5), core_pos/neg (0.5≤|x|<3), tail_pos/neg (|x|≥3)
 - `static_assert` for compile-time type verification
 - Reusable tests integrated in main files (no standalone scripts)
 - No AI attribution in commits
+- **Exploratory tests must be added to existing tools** (e.g., new `--mode` flags), not standalone scripts that require permission each run
 
 ## Priority Next Steps
 
