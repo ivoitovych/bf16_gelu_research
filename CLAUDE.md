@@ -135,13 +135,14 @@ Regions: near_zero (|x|<0.5), core_pos/neg (0.5≤|x|<3), tail_pos/neg (|x|≥3)
 
 | Method | near_zero | core_pos | core_neg | tail_pos | tail_neg |
 |--------|-----------|----------|----------|----------|----------|
-| **C1 Spline** | **0.00** | 0.07 | 4.09 | 0.00 | **0.05** |
-| **B3 Erf** | **0.00** | 0.04 | 2.03 | 0.00 | 0.05 |
-| **R4 Tanh** | **0.00** | **0.03** | **1.75** | 0.00 | 0.53 |
-| R2 Rational | 0.00 | 5.02 | 126.52 | 0.00 | 1.08 |
-| R1 Poly-9 | 0.00 | 7.38 | 150.87 | 0.00 | 3.12 |
+| **R5 LUT** | **0.00** | **0.00** | **0.03** | 0.00 | 0.39 |
+| **C1 Spline** | 0.00 | 0.07 | 4.09 | 0.00 | 0.41 |
+| **B3 Erf** | 0.00 | 0.04 | 2.03 | 0.00 | 0.50 |
+| **D2 LUT+Erf** | 0.00 | 0.04 | 2.03 | 0.00 | 0.50 |
+| **F2 Quadrature** | 0.00 | 0.12 | 1.94 | 0.00 | 0.50 |
+| **R4 Tanh** | 0.00 | 0.03 | 1.75 | 0.00 | 0.53 |
 
-(Mean ULP per region. Extended tail LUT dramatically reduced tail_neg errors.)
+(Mean ULP per region. All top methods use extended tail LUT for tail_neg.)
 
 ## Design Decisions
 
@@ -167,8 +168,10 @@ Regions: near_zero (|x|<0.5), core_pos/neg (0.5≤|x|<3), tail_pos/neg (|x|≥3)
 - Do NOT mention AI, Claude, or LLM in commit messages
 - Keep commit messages clean and professional
 
-## Priority Next Steps
+## Project Status
 
-1. **E2 Coefficient quantization** to validate BF16 hardware behavior
-2. **C2 Piecewise rational** (3-5 segments) for potential improvement
-3. **G2 FMA comparison** to measure impact of fused multiply-add
+**All phases complete.** 8 methods achieve Max ULP = 145 (bf16 underflow limit):
+- R5 LUT (0.10 mean), C1 Spline (0.13), B3 Erf (0.13), D2 LUT+Erf (0.13)
+- F2 Quadrature (0.13), R4 Tanh (0.14, max 166), F3 CF Erf (0.15), D4 Non-uniform (0.63)
+
+Analysis tools available: `--quantization`, `--fma`, `--sensitivity`, `--cost-model`
