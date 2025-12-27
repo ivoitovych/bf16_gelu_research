@@ -386,3 +386,95 @@ This is inherent to the bf16 representation:
 - `gelu_implementations.cpp`: Added tail_lut namespace, gelu_negative_tail(), --calibrate mode
 - `CLAUDE.md`: Updated with new results
 - `HISTORY.md`: This session documentation
+
+---
+
+## Session 5: New Implementations & Bug Fixes
+
+### Objectives
+Implement missing methods from FinalLists.md taxonomy and fix issues discovered during testing.
+
+### New Implementations
+
+**A1: Direct Polynomial (7th/9th degree)**
+- Minimax polynomial directly approximating GELU(x)
+- Two variants: Poly-7 and Poly-9
+- Mean ULP: 4.06-4.08 (higher than expected due to poor core_neg performance)
+
+**B3: Erf Polynomial (Abramowitz-Stegun)**
+- Piecewise erf approximation:
+  - Taylor series for |z| < 1: erf(z) ≈ (2/√π)z(1 - z²/3 + z⁴/10 - z⁶/42)
+  - Rational approximation for |z| ≥ 1 (A-S 7.1.26 style)
+- Mean ULP: **0.61** (ties with R4)
+
+**C1: Cubic Spline (9 segments + Fritsch-Carlson)**
+- Hermite cubic interpolation with 10 knots
+- Added knot at x=-3 to fix monotonicity in [-4,-2]
+- Fritsch-Carlson derivative clamping prevents overshoot
+- Near-zero Taylor approximation for |x| < 0.125
+- Mean ULP: **0.60** (NEW BEST!)
+
+**G4: Backward Pass (GELU')**
+- GELU'(x) = Φ(x) + x·φ(x) where φ(x) = exp(-x²/2)/√(2π)
+- Uses same piecewise erf as B3 for Φ(x)
+- Note: derivative can be NEGATIVE for x < -0.55
+
+**G7/G8: Regression Suite**
+- 50 adversarial test points (saturation boundaries, spline knots, etc.)
+- Quick regression check for all implementations
+- Added --regression CLI flag
+
+### Bugs Fixed
+
+**C1 Cubic Spline (Mean ULP: 3926 → 0.60)**
+1. **Monotonicity violation**: Original [-4,-2] segment had α² + β² = 14.2 > 9, violating Fritsch-Carlson condition
+   - Fix: Added knot at x=-3 to split segment
+   - Fix: Added derivative clamping in hermite_cubic()
+2. **Near-zero failure**: Spline gave wrong values for tiny |x|
+   - Fix: Added Taylor approximation for |x| < 0.125
+
+**B3 Erf Polynomial (Mean ULP: 22.47 → 0.61)**
+- Pure Taylor series diverged for |z| > 1
+- Fix: Piecewise approach with rational for |z| ≥ 1
+
+**G4 Derivative**
+- approx_cdf() used same divergent Taylor series
+- Incorrect clamping to [0, ∞) - GELU' can be negative!
+- Fix: Piecewise erf, proper bounds [-0.5, 1.5]
+
+### Results Summary
+
+| Method | Mean ULP | Status |
+|--------|----------|--------|
+| **C1 Spline** | **0.60** | NEW BEST |
+| **B3 Erf** | 0.61 | Fixed |
+| R4 Tanh | 0.61 | Previous best |
+| R2 Rational | 1.69 | |
+| R1 Poly-9 | 1.90 | |
+| A1 Direct | 4.06 | New |
+
+### Technical Insights
+
+**Fritsch-Carlson Monotonicity**
+For Hermite interpolation to be monotone, derivatives must satisfy:
+```
+α = m0/δ, β = m1/δ, where δ = (y1-y0)/h
+Condition: α² + β² ≤ 9
+If violated: τ = 3/√(α² + β²), m0 → τ·α·δ, m1 → τ·β·δ
+```
+
+**GELU Derivative Sign**
+- GELU has a local minimum around x ≈ -0.55
+- GELU'(x) is negative for x < -0.55 (decreasing toward minimum)
+- Previous implementations incorrectly assumed GELU' ≥ 0
+
+### Files Modified
+- `gelu_implementations.cpp`: All new implementations and fixes
+- `CLAUDE.md`: Updated results and implemented methods list
+- `README.md`: Updated key achievements table
+- `HISTORY.md`: This session documentation
+
+### CLI Flags Added
+- `--regression`: G7/G8 regression suite
+- `--derivative`: G4 backward pass test
+- `--verify-knots`: Debug C1 spline knot values
