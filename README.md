@@ -243,14 +243,14 @@ Mean ULP 0.11, Max ULP 87 (limited by tail LUT).
 GELU(x) ≈ x · σ(1.702x)
 σ(z) ≈ 0.5 + z / (2(1 + |z|))
 ```
-Simple rational sigmoid approximation. Mean ULP 1.67, Max ULP 1068.
+Simple rational sigmoid approximation. Mean ULP 1.64, Max ULP 1068.
 
 #### B1v2: Quadratic Sigmoid GELU
 ```
 GELU(x) ≈ x · σ(1.702x)
 σ(z) ≈ 0.5 + 0.5·z / √(1 + z²)
 ```
-Uses hardware-accelerated sqrt for better accuracy. Mean ULP 1.50, Max ULP 625.
+Uses hardware-accelerated sqrt for better accuracy. Mean ULP 1.47, Max ULP 625.
 
 #### R1: Saturation + Polynomial Core
 ```
