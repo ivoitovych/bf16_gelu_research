@@ -798,6 +798,13 @@ public:
         initialized = true;
     }
 
+    // Accessor for R5 Pure to use precomputed values
+    float get_phi(int idx) const {
+        if (idx < 0) idx = 0;
+        if (idx >= lut_data::LUT_SIZE) idx = lut_data::LUT_SIZE - 1;
+        return phi_table[idx];
+    }
+
     std::bfloat16_t compute(std::bfloat16_t x_bf16) {
         float x = static_cast<float>(x_bf16);
 
@@ -834,6 +841,56 @@ static GeLU_LUT g_lut;
 
 std::bfloat16_t gelu_r5_lut(std::bfloat16_t x_bf16) {
     return g_lut.compute(x_bf16);
+}
+
+// ============================================================================
+// R5 PURE: LUT WITH ASYMPTOTIC TAIL (NO TAIL LUT)
+// ============================================================================
+
+/**
+ * @brief R5 Pure: LUT-based GELU with asymptotic expansion for tail
+ *
+ * Like R5 LUT but uses asymptotic expansion for deep negative tail
+ * instead of the two-tier tail LUT. This eliminates interpolation error
+ * in the tail region, similar to how B3 Pure improves on B3 Erf Poly.
+ *
+ * - Core region [-3, 3]: LUT with linear interpolation (512 entries)
+ * - Negative tail (x < -3): Asymptotic expansion GELU(x) ≈ -φ(x)·(1 - 1/x² + 3/x⁴ - 15/x⁶)
+ * - Positive saturation (x >= 3): GELU(x) = x
+ */
+std::bfloat16_t gelu_r5_pure(std::bfloat16_t x_bf16) {
+    float x = static_cast<float>(x_bf16);
+
+    // Positive saturation: GELU(x) ≈ x for x >= 3
+    if (x >= thresholds::POS) {
+        return static_cast<std::bfloat16_t>(x);
+    }
+
+    // For negative tail (x < -3), use asymptotic expansion directly
+    // This bypasses the tail LUT interpolation that causes max ULP = 87
+    if (x < -3.0f) {
+        return static_cast<std::bfloat16_t>(gelu_asymptotic(x));
+    }
+
+    // Core region: use LUT with linear interpolation
+    // Compute table index
+    float idx_f = (x - lut_data::LUT_MIN) * lut_data::LUT_INV_STEP;
+    int idx = static_cast<int>(idx_f);
+    float frac = idx_f - idx;
+
+    // Bounds check
+    if (idx < 0) idx = 0;
+    if (idx >= lut_data::LUT_SIZE - 1) idx = lut_data::LUT_SIZE - 2;
+
+    // Use precomputed LUT values (no std::erf at runtime)
+    float phi_left = g_lut.get_phi(idx);
+    float phi_right = g_lut.get_phi(idx + 1);
+
+    // Linear interpolation
+    float phi = phi_left + frac * (phi_right - phi_left);
+
+    float result = x * phi;
+    return static_cast<std::bfloat16_t>(result);
 }
 
 // ============================================================================
@@ -2663,6 +2720,7 @@ void run_regression_suite(const UlpCalculator& ulp_calc) {
         {"R3: C3 PWL (Power-of-2)", gelu_r3_pwl},
         {"R4: B2 Tanh-form + Rational", gelu_r4_tanh_rational},
         {"R5: D1 LUT + Interpolation", gelu_r5_lut},
+        {"R5 Pure: LUT + Asymptotic", gelu_r5_pure},
     };
 
     std::cout << std::string(70, '-') << std::endl;
@@ -2951,6 +3009,7 @@ void run_diagnostics(const UlpCalculator& ulp_calc) {
         {"R3: C3 PWL (Power-of-2)", gelu_r3_pwl},
         {"R4: B2 Tanh-form + Rational", gelu_r4_tanh_rational},
         {"R5: D1 LUT + Interpolation", gelu_r5_lut},
+        {"R5 Pure: LUT + Asymptotic", gelu_r5_pure},
     };
 
     for (const auto& [name, fn] : implementations) {
@@ -4397,6 +4456,7 @@ int main(int argc, char* argv[]) {
             {"R3: C3 PWL (Power-of-2)", gelu_r3_pwl},
             {"R4: B2 Tanh-form + Rational", gelu_r4_tanh_rational},
             {"R5: D1 LUT + Interpolation", gelu_r5_lut},
+            {"R5 Pure: LUT + Asymptotic", gelu_r5_pure},
             // Category D: Hybrid & LUT-based
             {"D2: LUT Tails + Poly Center", gelu_d2_lut_poly_hybrid},
             {"D3: LUT + Poly Correction", gelu_d3_lut_correction},

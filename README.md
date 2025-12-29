@@ -8,9 +8,9 @@ This project implements and evaluates multiple GELU approximation strategies opt
 
 ### Key Achievements
 
-**8 methods achieve Max ULP ≤ 88** with B3 Pure leading at Max ULP = 33. Deep tail accuracy achieved via asymptotic expansion `GELU(x) ≈ -φ(x)·(1 - 1/x² + 3/x⁴ - 15/x⁶)` and erfc-based reference to avoid catastrophic cancellation.
+**9 methods achieve Max ULP ≤ 88** with R5 Pure and B3 Pure tied at Max ULP = 33 (R5 Pure has better Mean ULP: 0.003 vs 0.01). Deep tail accuracy achieved via asymptotic expansion `GELU(x) ≈ -φ(x)·(1 - 1/x² + 3/x⁴ - 15/x⁶)` and erfc-based reference to avoid catastrophic cancellation.
 
-### Complete Results Table (All 26 Methods)
+### Complete Results Table (All 27 Methods)
 
 Sorted by Max ULP. Region definitions: **nz** = near_zero (|x| < 0.5), **cp** = core_pos (0.5 ≤ x < 3), **cn** = core_neg (-3 ≤ x < -0.5), **tn** = tail_neg (x < -3).
 
@@ -18,6 +18,7 @@ Sorted by Max ULP. Region definitions: **nz** = near_zero (|x| < 0.5), **cp** = 
 
 | Method | *Mean* | Max | *nz Mean* | nz Max | *cp Mean* | cp Max | *cn Mean* | cn Max | *tn Mean* | tn Max |
 |--------|--------|-----|-----------|--------|-----------|--------|-----------|--------|-----------|--------|
+| **R5 Pure** | ***0.003*** | **33** | *0.00* | 1 | *0.00* | 0 | *0.03* | 1 | *0.01* | 33 |
 | **B3 Pure** | ***0.01*** | **33** | *0.00* | 0 | *0.04* | 1 | *2.03* | 23 | *0.01* | 33 |
 | R5 LUT | *0.07* | 87 | *0.00* | 1 | *0.00* | 0 | *0.03* | 1 | *0.29* | 87 |
 | B3 Erf Poly | *0.11* | 87 | *0.00* | 0 | *0.04* | 1 | *2.03* | 23 | *0.40* | 87 |
@@ -51,10 +52,10 @@ Sorted by Max ULP. Region definitions: **nz** = near_zero (|x| < 0.5), **cp** = 
 
 1. **tail_pos is trivial**: All methods achieve 0 ULP (saturation x ≥ 3 → GELU(x) = x)
 2. **core_neg is the bottleneck**: Most high-ULP methods fail at x ≈ -3.5 (TAIL_START boundary)
-3. **B3 Pure dominates**: Pure arithmetic (no LUT) achieves best Max ULP = 33 via asymptotic expansion
-4. **LUT-based methods plateau at 87**: Limited by tail LUT interpolation error at x ≈ -7.65
+3. **R5 Pure and B3 Pure tie at Max ULP 33**: Both use asymptotic expansion for deep tail; R5 Pure has better Mean ULP (0.003 vs 0.01)
+4. **LUT-based methods plateau at 87**: Limited by tail LUT interpolation error at x ≈ -7.65 (R5 Pure avoids this via asymptotic tail)
 
-26 methods implemented: 24 research methods across 8 categories from FinalLists.md taxonomy, plus 2 Tenstorrent hardware reference benchmarks.
+27 methods implemented: 25 research methods across 8 categories from FinalLists.md taxonomy, plus 2 Tenstorrent hardware reference benchmarks.
 
 ## Background
 
@@ -311,6 +312,26 @@ For x < -3.5: Use two-tier tail LUT (see Tail Handling section)
 **Why it works**: Linear interpolation error is O(h²·f'') where h is step size. For smooth Φ(x), this gives excellent accuracy with modest memory.
 
 **Result**: Mean ULP 0.07, Max ULP 87 (limited by tail LUT interpolation).
+
+---
+
+#### R5 Pure: LUT + Asymptotic Tail ⭐ Best Mean ULP
+
+**Mathematical basis**: Same as R5 LUT but uses asymptotic expansion for deep tail instead of tail LUT.
+
+```
+Core region [-3, 3]: 512-entry LUT with linear interpolation (same as R5 LUT)
+
+Negative tail (x < -3): Asymptotic expansion
+  GELU(x) ≈ -φ(x) · (1 - 1/x² + 3/x⁴ - 15/x⁶)
+  where φ(x) = exp(-x²/2) / √(2π)
+
+Positive saturation (x ≥ 3): GELU(x) = x
+```
+
+**Why it works**: The asymptotic series converges rapidly for |x| > 3, avoiding the interpolation error that limits R5 LUT to Max ULP 87. Combines the accuracy of LUT interpolation in the core region with the precision of analytical asymptotic expansion in the tail.
+
+**Result**: Mean ULP 0.003, Max ULP 33. Ties with B3 Pure for best Max ULP but has 3× better Mean ULP.
 
 ---
 
