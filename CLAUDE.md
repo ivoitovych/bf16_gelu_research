@@ -19,7 +19,7 @@ g++ -std=c++23 -O3 -march=native -o gelu_analysis gelu_implementations.cpp -lm
 # Other modes: --diagnose, --reference, --saturation, --calibrate,
 # --regression, --derivative, --verify-knots, --quantization, --fma,
 # --sensitivity, --cost-model, --epss, --range-scale, --denormal,
-# --softmax-unit, --tail-debug
+# --softmax-unit, --tail-debug, --sanity
 ```
 
 ## Project Structure
@@ -31,7 +31,7 @@ g++ -std=c++23 -O3 -march=native -o gelu_analysis gelu_implementations.cpp -lm
 | `debug_tools.cpp` | Exploratory debugging tools |
 | `FinalLists.md` | Strategy taxonomy (40 methods, 8 categories) |
 | `README.md` | Full documentation and results |
-| `HISTORY.md` | Development history (13 sessions) |
+| `HISTORY.md` | Development history (14 sessions) |
 | `CLAUDE.md` | This file - project instructions |
 
 ## Constraints
@@ -110,3 +110,4 @@ See [HISTORY.md](HISTORY.md) for detailed session-by-session development notes c
 - Session 11: Two-tier LUT fix (Max ULP 145→87)
 - Session 12: erfc + asymptotic expansion (Max ULP 87→33 for B3 Pure)
 - Session 13: Tenstorrent hardware reference benchmarks (TT Accurate, TT Fast)
+- Session 14: ULP measurement sanity check framework (--sanity flag)
