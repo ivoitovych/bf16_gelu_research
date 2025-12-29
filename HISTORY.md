@@ -1273,3 +1273,93 @@ The project achieves:
 - 8 methods with Max ULP ≤ 88
 - Best method (B3 Pure) uses pure arithmetic, no LUT
 - Correct reference function using erfc for numerical stability
+
+---
+
+## Session 13: Tenstorrent Hardware Reference Benchmarks
+
+### Objective
+Implement exact reproductions of Tenstorrent Wormhole/Blackhole hardware GELU implementations as reference benchmarks for precision comparison.
+
+### Source Documentation
+https://github.com/ivoitovych/tt-metal/blob/ivoitovych/bert-model-for-ttml-pr-gelu-test-suite-amendment-ulp-diagnostic-04/tt-train/tests/ops/gelu_implementation_reference.md
+
+### Implementations Added
+
+#### TT Accurate: Chebyshev-15
+- **Algorithm**: 15th-degree Chebyshev polynomial (default in tt-train forward pass)
+- **Source**: `tt_metal/hw/ckernels/wormhole_b0/metal/llk_api/llk_sfpu/ckernel_sfpu_gelu.h`
+- **Branch logic**:
+  - x == 0.0 → return 0.0
+  - x >= 3.0 → return x (identity saturation)
+  - x < -5.5 → return 0.0 (negative saturation)
+  - Otherwise → sign(x) * |POLYVAL15(coefficients, x)|
+- **16 coefficients**: c15 through c0, with c0 = 2.98325768482e-05
+
+#### TT Fast: 6-Piece PWL
+- **Algorithm**: 6-segment piecewise linear LUT (fast mode, not default)
+- **Source**: `tt_metal/third_party/tt_llk/tt_llk_wormhole_b0/common/inc/sfpu/ckernel_sfpu_gelu.h`
+- **Formula**: `GELU(x) = 0.5*x + sign(x) * (A[segment]*|x| + B[segment])`
+- **Segments by |x|**: [0,0.5), [0.5,1), [1,1.5), [1.5,2), [2,3), [3,∞)
+
+### Results (Entire BF16 Range)
+
+| Method | Mean ULP | Max ULP | Notes |
+|--------|----------|---------|-------|
+| TT Accurate | 3224.82 | 14330 | Floor value bug in near_zero |
+| TT Fast | 15782.90 | 32639 | No negative saturation |
+
+**Per-Region Analysis (TT Accurate):**
+
+| Region | Mean ULP | Max ULP |
+|--------|----------|---------|
+| near_zero | 6482.37 | 14330 |
+| core_pos | 0.03 | 1 |
+| core_neg | 0.39 | 4 |
+| tail_pos | 0.00 | 0 |
+| tail_neg | 87.73 | 13245 |
+
+**Per-Region Analysis (TT Fast):**
+
+| Region | Mean ULP | Max ULP |
+|--------|----------|---------|
+| near_zero | 19710.55 | 28802 |
+| core_pos | 0.64 | 5 |
+| core_neg | 477.71 | 1211 |
+| tail_pos | 0.00 | 0 |
+| tail_neg | 24357.40 | 32639 |
+
+### Key Observations
+
+1. **Core region accuracy is good**: Both TT methods achieve excellent accuracy in their designed operating range:
+   - TT Accurate: Max ULP 1-4 in core regions
+   - TT Fast: Max ULP 5 in core_pos
+
+2. **Floor value bug (TT Accurate)**: Tiny inputs (~1e-38 to ~1e-10) return constant ~2.98e-05 because the c0 coefficient dominates when higher-order polynomial terms vanish.
+
+3. **No negative saturation (TT Fast)**: For large negative x, TT Fast returns x instead of ~0, causing very high ULP errors in tail_neg.
+
+4. **Designed for limited range**: Both methods are optimized for typical neural network activation ranges (roughly [-5.5, 3]), NOT the entire bf16 range (~±3.4e38).
+
+### Important Notes
+
+**THESE ARE REFERENCE BENCHMARKS ONLY**
+
+- Implemented exactly as documented in tt-metal source code
+- Known bugs/limitations are PRESERVED intentionally
+- Do NOT optimize, fix, or modify these implementations
+- Purpose: Measure precision of actual Tenstorrent hardware vs. our research methods
+
+### Files Modified
+- `gelu_implementations.cpp`: Added `gelu_tt_accurate()`, `gelu_tt_fast()`, `tt_reference` namespace
+- `README.md`: Added TT methods to results table, new documentation section
+- `CLAUDE.md`: Updated method count (24→26), added TT reference section
+- `HISTORY.md`: This session documentation
+
+### Project Status
+
+**26 methods total**: 24 research methods + 2 Tenstorrent hardware reference benchmarks.
+
+Best research method: **B3 Pure with Max ULP = 33** (vs TT Accurate Max ULP 14330 on full bf16 range).
+
+In the core activation range where TT methods are designed to operate, TT Accurate achieves competitive accuracy (Max ULP 1-4).

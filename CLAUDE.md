@@ -13,7 +13,7 @@ Systematic ULP error analysis of GELU approximations for bfloat16 arithmetic. Se
 
 # Build and run
 g++ -std=c++23 -O3 -march=native -o gelu_analysis gelu_implementations.cpp -lm
-./gelu_analysis --analyze      # Full ULP analysis (24 methods)
+./gelu_analysis --analyze      # Full ULP analysis (26 methods)
 ./gelu_analysis --all          # All analysis modes
 
 # Other modes: --diagnose, --reference, --saturation, --calibrate,
@@ -31,7 +31,7 @@ g++ -std=c++23 -O3 -march=native -o gelu_analysis gelu_implementations.cpp -lm
 | `debug_tools.cpp` | Exploratory debugging tools |
 | `FinalLists.md` | Strategy taxonomy (40 methods, 8 categories) |
 | `README.md` | Full documentation and results |
-| `HISTORY.md` | Development history (12 sessions) |
+| `HISTORY.md` | Development history (13 sessions) |
 | `CLAUDE.md` | This file - project instructions |
 
 ## Constraints
@@ -55,6 +55,14 @@ See [README.md](README.md) for complete results table with per-region analysis.
 | R5/C1/B3/D2/F2/F3 | 87 | Limited by tail LUT interpolation |
 | D4 | 88 | Non-uniform LUT |
 | R4 | 166 | Boundary at x=-3.5 |
+
+### Tenstorrent Hardware Reference Benchmarks
+
+Two reference implementations from Tenstorrent Wormhole/Blackhole hardware (DO NOT MODIFY):
+- **TT Accurate**: 15th-degree Chebyshev polynomial (default in tt-train)
+- **TT Fast**: 6-piece piecewise linear LUT (fast mode)
+
+These are NOT optimized for full bf16 range - included for precision comparison only.
 
 ### Key Technical Achievements
 
@@ -101,3 +109,4 @@ See [HISTORY.md](HISTORY.md) for detailed session-by-session development notes c
 - Sessions 7-10: Complete taxonomy coverage (40/40 methods)
 - Session 11: Two-tier LUT fix (Max ULP 145→87)
 - Session 12: erfc + asymptotic expansion (Max ULP 87→33 for B3 Pure)
+- Session 13: Tenstorrent hardware reference benchmarks (TT Accurate, TT Fast)
