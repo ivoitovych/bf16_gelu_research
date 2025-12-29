@@ -1,6 +1,7 @@
 # Compiled binaries
 gelu_analysis
 ulp_calculator
+debug_tools
 test_bfloat16
 *.o
 *.out
