@@ -115,6 +115,22 @@ g++ -std=c++23 -O2 -o ulp_calculator ulp_calculator.cpp
 g++ -std=c++23 -o test_bfloat16 test_bfloat16.cpp && ./test_bfloat16
 ```
 
+### Cross-Platform Verification
+
+Results are **identical** across different GCC versions and platforms:
+
+| Platform | Compiler | Results |
+|----------|----------|---------|
+| WSL (Ubuntu 24.04) | GCC 13.3.0 | ✓ Verified |
+| MinGW-w64 (MSYS2 UCRT64) | GCC 15.2.0 | ✓ Verified |
+
+All 26 methods produce byte-for-byte identical ULP analysis output on both platforms (after normalizing line endings). This confirms:
+- No compiler-specific floating-point behavior differences
+- Consistent `std::bfloat16_t` implementation across GCC versions
+- Deterministic results for reproducible research
+
+**Note**: On Windows/MinGW, add `-D_USE_MATH_DEFINES` for M_PI definition.
+
 ## Usage
 
 ### Running Analysis
