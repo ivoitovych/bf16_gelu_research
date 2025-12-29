@@ -1981,6 +1981,220 @@ std::bfloat16_t gelu_h3_softex(std::bfloat16_t x_bf16) {
 }
 
 // ============================================================================
+// TENSTORRENT HARDWARE REFERENCE BENCHMARKS
+// ============================================================================
+//
+// *** IMPORTANT: REFERENCE BENCHMARKS ONLY - DO NOT MODIFY ***
+//
+// These implementations reproduce the EXACT algorithms used in Tenstorrent's
+// Wormhole and Blackhole AI accelerator hardware as of December 2025.
+// They are provided SOLELY for precision comparison and benchmarking purposes.
+//
+// DO NOT:
+//   - Fix bugs (e.g., the floor value issue in accurate mode)
+//   - Optimize the algorithms
+//   - Change coefficients or thresholds
+//   - "Improve" the implementations in any way
+//
+// These must remain faithful to the original tt-metal source code to enable
+// accurate ULP comparison against actual hardware behavior.
+//
+// Source: https://github.com/tenstorrent/tt-metal
+// Branch: ivoitovych/bert-model-for-ttml-pr-gelu-test-suite-amendment-ulp-diagnostic-04
+// Files:
+//   - tt_metal/hw/ckernels/wormhole_b0/metal/llk_api/llk_sfpu/ckernel_sfpu_gelu.h
+//   - tt_metal/third_party/tt_llk/tt_llk_wormhole_b0/common/inc/sfpu/ckernel_sfpu_gelu.h
+//
+// ============================================================================
+
+namespace tt_reference {
+
+// Chebyshev polynomial coefficients for TT Accurate mode (ckernel_sfpu_gelu.h:36-52)
+// These are the EXACT coefficients from tt-metal - DO NOT MODIFY
+constexpr float TT_CHEBYSHEV_C15 = -1.81205228163e-09f;
+constexpr float TT_CHEBYSHEV_C14 = -4.59055119276e-08f;
+constexpr float TT_CHEBYSHEV_C13 = -3.74540617693e-07f;
+constexpr float TT_CHEBYSHEV_C12 = -2.29754133825e-07f;
+constexpr float TT_CHEBYSHEV_C11 =  1.19076782913e-05f;
+constexpr float TT_CHEBYSHEV_C10 =  4.25116466215e-05f;
+constexpr float TT_CHEBYSHEV_C9  = -0.000138391838381f;
+constexpr float TT_CHEBYSHEV_C8  = -0.000862052441087f;
+constexpr float TT_CHEBYSHEV_C7  =  0.000768340223025f;
+constexpr float TT_CHEBYSHEV_C6  =  0.0092074331601f;
+constexpr float TT_CHEBYSHEV_C5  = -0.00208478037614f;
+constexpr float TT_CHEBYSHEV_C4  = -0.0656369476513f;
+constexpr float TT_CHEBYSHEV_C3  =  0.00244542739174f;
+constexpr float TT_CHEBYSHEV_C2  =  0.398579460781f;
+constexpr float TT_CHEBYSHEV_C1  =  0.499174645395f;
+constexpr float TT_CHEBYSHEV_C0  =  2.98325768482e-05f;  // Known floor value bug source
+
+// TT saturation thresholds (different from our optimized thresholds)
+constexpr float TT_POS_SAT = 3.0f;   // x >= 3.0 -> return x
+constexpr float TT_NEG_SAT = -5.5f;  // x < -5.5 -> return 0
+
+// 6-piece PWL LUT coefficients for TT Fast mode (ckernel_sfpu_gelu.h:205-212)
+// Format: GELU(x) = 0.5*x + sign(x) * (A*|x| + B)
+// Note: First segment B is 0x86D8 ≈ -0.000104 (not -0.0150 as source comment claims)
+struct TT_LUT_Segment {
+    float max_abs_x;  // Upper bound for |x| in this segment
+    float slope_A;
+    float intercept_B;
+};
+
+constexpr TT_LUT_Segment TT_LUT_SEGMENTS[6] = {
+    {0.5f,  0.1928f, -0.000104f},   // [0.0, 0.5): B = 0x86D8 (actual loaded value)
+    {1.0f,  0.4939f, -0.1605f},     // [0.5, 1.0)
+    {1.5f,  0.6189f, -0.2797f},     // [1.0, 1.5)
+    {2.0f,  0.6099f, -0.2635f},     // [1.5, 2.0)
+    {3.0f,  0.5402f, -0.1194f},     // [2.0, 3.0)
+    {1e30f, 0.5000f,  0.0f},        // [3.0, inf): identity region
+};
+
+/**
+ * @brief POLYVAL15 - Horner's method for 15th-degree polynomial
+ *
+ * Reproduces the POLYVAL15 macro from ckernel_sfpu_gelu.h:13-31
+ * DO NOT MODIFY - must match hardware behavior exactly.
+ */
+inline float tt_polyval15(float x) {
+    float result = TT_CHEBYSHEV_C15;
+    result = result * x + TT_CHEBYSHEV_C14;
+    result = result * x + TT_CHEBYSHEV_C13;
+    result = result * x + TT_CHEBYSHEV_C12;
+    result = result * x + TT_CHEBYSHEV_C11;
+    result = result * x + TT_CHEBYSHEV_C10;
+    result = result * x + TT_CHEBYSHEV_C9;
+    result = result * x + TT_CHEBYSHEV_C8;
+    result = result * x + TT_CHEBYSHEV_C7;
+    result = result * x + TT_CHEBYSHEV_C6;
+    result = result * x + TT_CHEBYSHEV_C5;
+    result = result * x + TT_CHEBYSHEV_C4;
+    result = result * x + TT_CHEBYSHEV_C3;
+    result = result * x + TT_CHEBYSHEV_C2;
+    result = result * x + TT_CHEBYSHEV_C1;
+    result = result * x + TT_CHEBYSHEV_C0;
+    return result;
+}
+
+} // namespace tt_reference
+
+/**
+ * @brief TT Accurate: Tenstorrent Hardware GELU (Chebyshev Mode)
+ *
+ * *** REFERENCE BENCHMARK ONLY - DO NOT MODIFY ***
+ *
+ * This is the DEFAULT GELU implementation used by tt-train for forward pass.
+ * It uses a 15th-degree Chebyshev polynomial approximation.
+ *
+ * Algorithm from: tt_metal/hw/ckernels/wormhole_b0/metal/llk_api/llk_sfpu/ckernel_sfpu_gelu.h
+ *
+ * Branch logic (lines 73-89):
+ *   - If x == 0.0: return 0.0
+ *   - If x >= 3.0: return x (identity saturation)
+ *   - If x < -5.5: return 0.0 (negative saturation, implicit via polynomial)
+ *   - Otherwise: sign(x) * |POLYVAL15(coefficients, x)|
+ *
+ * Known precision characteristics (measured across entire bf16 range):
+ *   - core_pos [0.5, 3): Excellent accuracy (Max ULP ~1)
+ *   - core_neg [-3, -0.5): Excellent accuracy (Max ULP ~4)
+ *   - near_zero |x| < 0.5: Floor value bug (Max ULP ~14330)
+ *     Tiny inputs (~1e-38 to ~1e-10) return constant ~2.98e-05
+ *     because the c0 coefficient dominates when higher-order terms vanish
+ *   - Saturation x >= 3: Exact (identity, returns x)
+ *   - Saturation x < -5.5: Returns 0 (explicit check in hardware)
+ *
+ * @param x_bf16 Input in bfloat16 format
+ * @return GELU(x) computed using TT hardware algorithm
+ */
+std::bfloat16_t gelu_tt_accurate(std::bfloat16_t x_bf16) {
+    float x = static_cast<float>(x_bf16);
+
+    // Special case: x == 0 returns exactly 0 (ckernel_sfpu_gelu.h:80)
+    if (x == 0.0f) {
+        return static_cast<std::bfloat16_t>(0.0f);
+    }
+
+    // Positive saturation: x >= 3.0 returns x (ckernel_sfpu_gelu.h:81)
+    // The hardware code: v_elseif(in < 3.0f) { ... } leaves result = in for x >= 3
+    if (x >= tt_reference::TT_POS_SAT) {
+        return x_bf16;
+    }
+
+    // Negative saturation: x < -5.5 returns 0 (ckernel_sfpu_gelu.h:35)
+    // The hardware code: v_if(val >= -5.5f) { ... } v_endif; leaves result = 0.0f for x < -5.5
+    if (x < tt_reference::TT_NEG_SAT) {
+        return static_cast<std::bfloat16_t>(0.0f);
+    }
+
+    // Apply Chebyshev polynomial for x in [-5.5, 3.0) (ckernel_sfpu_gelu.h:33-61)
+    // result = sign(x) * |POLYVAL15(coefficients, x)|
+    float poly_result = tt_reference::tt_polyval15(x);
+    float result = std::copysign(std::abs(poly_result), x);
+
+    return static_cast<std::bfloat16_t>(result);
+}
+
+/**
+ * @brief TT Fast: Tenstorrent Hardware GELU (6-Piece PWL LUT Mode)
+ *
+ * *** REFERENCE BENCHMARK ONLY - DO NOT MODIFY ***
+ *
+ * This is the FAST/APPROXIMATE GELU mode available in tt-metal.
+ * NOT used by tt-train by default (requires explicit parameter=true).
+ *
+ * Algorithm from: tt_metal/third_party/tt_llk/tt_llk_wormhole_b0/common/inc/sfpu/ckernel_sfpu_gelu.h
+ *
+ * Formula (lines 38-84):
+ *   GELU(x) = 0.5*x + sign(x) * (A[segment]*|x| + B[segment])
+ *
+ * 6 segments defined by |x| thresholds (lines 205-212):
+ *   [0.0, 0.5):  A=0.1928, B=-0.000104 (B=0x86D8, actual loaded value)
+ *   [0.5, 1.0):  A=0.4939, B=-0.1605
+ *   [1.0, 1.5):  A=0.6189, B=-0.2797
+ *   [1.5, 2.0):  A=0.6099, B=-0.2635
+ *   [2.0, 3.0):  A=0.5402, B=-0.1194
+ *   [3.0, inf):  A=0.5000, B=0.0 (approaches identity)
+ *
+ * Note: Source code comment claims B=-0.0150 for first segment, but actual
+ * loaded hex value 0x86D8 ≈ -0.000104. This implementation uses the actual value.
+ *
+ * Known precision characteristics (measured across entire bf16 range):
+ *   - core_pos [0.5, 3): Good accuracy (Max ULP ~5)
+ *   - core_neg [-3, -0.5): Moderate accuracy (Max ULP ~1211)
+ *   - near_zero |x| < 0.5: High error (Max ULP ~28802)
+ *   - tail_neg x < -3: Very high error (Max ULP ~32639)
+ *     No negative saturation - returns x instead of ~0 for large negative x
+ *   - tail_pos x >= 3: Exact (identity, A=0.5 B=0 gives 0.5x + 0.5|x| = x)
+ *
+ * @param x_bf16 Input in bfloat16 format
+ * @return GELU(x) computed using TT hardware fast algorithm
+ */
+std::bfloat16_t gelu_tt_fast(std::bfloat16_t x_bf16) {
+    float x = static_cast<float>(x_bf16);
+    float abs_x = std::abs(x);
+    float sign_x = (x >= 0.0f) ? 1.0f : -1.0f;
+
+    // Find appropriate LUT segment based on |x|
+    float A = 0.5f;
+    float B = 0.0f;
+    for (const auto& seg : tt_reference::TT_LUT_SEGMENTS) {
+        if (abs_x < seg.max_abs_x) {
+            A = seg.slope_A;
+            B = seg.intercept_B;
+            break;
+        }
+    }
+
+    // lut2_sign(x) = sign(x) * (A * |x| + B)
+    float lut_result = sign_x * (A * abs_x + B);
+
+    // GELU(x) = 0.5 * x + lut_result
+    float result = 0.5f * x + lut_result;
+
+    return static_cast<std::bfloat16_t>(result);
+}
+
+// ============================================================================
 // G4: BACKWARD PASS - GELU DERIVATIVE
 // ============================================================================
 
@@ -4020,6 +4234,9 @@ int main(int argc, char* argv[]) {
             // Category H: Advanced
             {"H2: GELU-Softmax Unit", gelu_h2_softmax_unit},
             {"H3: SoftEx Tanh", gelu_h3_softex},
+            // Category TT: Tenstorrent Hardware Reference (DO NOT MODIFY)
+            {"TT Accurate: Chebyshev-15", gelu_tt_accurate},
+            {"TT Fast: 6-Piece PWL", gelu_tt_fast},
         };
 
         std::cout << "\n================================================================" << std::endl;

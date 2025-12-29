@@ -10,7 +10,7 @@ This project implements and evaluates multiple GELU approximation strategies opt
 
 **8 methods achieve Max ULP ≤ 88** with B3 Pure leading at Max ULP = 33. Deep tail accuracy achieved via asymptotic expansion `GELU(x) ≈ -φ(x)·(1 - 1/x² + 3/x⁴ - 15/x⁶)` and erfc-based reference to avoid catastrophic cancellation.
 
-### Complete Results Table (All 24 Methods)
+### Complete Results Table (All 26 Methods)
 
 Sorted by Max ULP. Region definitions: **nz** = near_zero (|x| < 0.5), **cp** = core_pos (0.5 ≤ x < 3), **cn** = core_neg (-3 ≤ x < -0.5), **tp** = tail_pos (x ≥ 3), **tn** = tail_neg (x < -3).
 
@@ -40,6 +40,10 @@ Sorted by Max ULP. Region definitions: **nz** = near_zero (|x| < 0.5), **cp** = 
 | R1 Poly-9 | 1.40 | 1312 | 0.00 | 1 | 7.38 | 40 | 150.88 | 926 | 0.00 | 0 | 2.50 | 1312 |
 | A1 Poly-9 | 3.56 | 1404 | 0.88 | 122 | 10.87 | 29 | 475.34 | 1211 | 0.00 | 0 | 2.94 | 1404 |
 | A1 Poly-7 | 3.58 | 1547 | 0.88 | 122 | 10.81 | 28 | 476.75 | 1211 | 0.00 | 0 | 3.02 | 1547 |
+| **TT Accurate*** | 3224.82 | 14330 | 6482.37 | 14330 | 0.03 | 1 | 0.39 | 4 | 0.00 | 0 | 87.73 | 13245 |
+| **TT Fast*** | 15782.90 | 32639 | 19710.55 | 28802 | 0.64 | 5 | 477.71 | 1211 | 0.00 | 0 | 24357.40 | 32639 |
+
+*\*TT Accurate/Fast are Tenstorrent hardware reference benchmarks (not optimized for full bf16 range)*
 
 ### Key Observations
 
@@ -48,7 +52,7 @@ Sorted by Max ULP. Region definitions: **nz** = near_zero (|x| < 0.5), **cp** = 
 3. **B3 Pure dominates**: Pure arithmetic (no LUT) achieves best Max ULP = 33 via asymptotic expansion
 4. **LUT-based methods plateau at 87**: Limited by tail LUT interpolation error at x ≈ -7.65
 
-24 methods implemented across 8 categories from FinalLists.md taxonomy.
+26 methods implemented: 24 research methods across 8 categories from FinalLists.md taxonomy, plus 2 Tenstorrent hardware reference benchmarks.
 
 ## Background
 
@@ -395,6 +399,33 @@ tanh(z) = (exp(2z) - 1) / (exp(2z) + 1)
 Arithmetic-only exp replacement
 ```
 Enables tanh-based GELU without true exp(). Mean ULP 1.26, Max ULP 1247.
+
+### Tenstorrent Hardware Reference Benchmarks
+
+**These are REFERENCE IMPLEMENTATIONS ONLY** - exact reproductions of Tenstorrent Wormhole/Blackhole hardware GELU for precision comparison. They are NOT optimized for the full bf16 range and should NOT be modified.
+
+#### TT Accurate: Chebyshev-15
+```
+15th-degree Chebyshev polynomial (default mode in tt-train)
+- x == 0: return 0
+- x >= 3: return x (identity saturation)
+- x < -5.5: return 0 (negative saturation)
+- Otherwise: sign(x) * |POLYVAL15(coefficients, x)|
+```
+Designed for typical activation range [-5.5, 3]. Excellent in core regions (Max ULP 1-4), but has "floor value bug" where tiny inputs (~1e-38 to ~1e-10) return constant ~2.98e-05 due to c0 coefficient dominating.
+
+**Source**: `tt_metal/hw/ckernels/wormhole_b0/metal/llk_api/llk_sfpu/ckernel_sfpu_gelu.h`
+
+#### TT Fast: 6-Piece PWL
+```
+6-segment piecewise linear LUT (fast/approximate mode)
+GELU(x) = 0.5*x + sign(x) * (A[segment]*|x| + B[segment])
+
+Segments by |x|: [0,0.5), [0.5,1), [1,1.5), [1.5,2), [2,3), [3,∞)
+```
+Fast approximation using 6 linear segments. Good in core_pos (Max ULP 5), but no negative saturation handling - returns x instead of ~0 for large negative inputs.
+
+**Source**: `tt_metal/third_party/tt_llk/tt_llk_wormhole_b0/common/inc/sfpu/ckernel_sfpu_gelu.h`
 
 ### Tail Handling
 
