@@ -1,10 +1,20 @@
 # Compiled binaries
 gelu_analysis
+gelu_analysis_mingw.exe
+gelu_analysis_wsl
 ulp_calculator
 debug_tools
 test_bfloat16
+*.exe
 *.o
 *.out
+
+# Test output files
+*_results.txt
+mingw_unix.txt
+
+# Claude Code
+.claude/
 
 # Editor/IDE files
 *.swp
