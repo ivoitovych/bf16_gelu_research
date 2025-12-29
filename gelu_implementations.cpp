@@ -2195,6 +2195,128 @@ std::bfloat16_t gelu_tt_fast(std::bfloat16_t x_bf16) {
 }
 
 // ============================================================================
+// SANITY CHECK METHODS - ULP Measurement Verification
+// ============================================================================
+//
+// These methods are used to verify the ULP measurement framework is working
+// correctly. They are NOT GELU approximations - they return values with
+// known/controlled ULP errors to validate the measurement system.
+//
+// Usage: ./gelu_analysis --sanity
+//
+// Expected results:
+//   - Sanity Perfect: Max ULP = 0 (returns exact reference)
+//   - Sanity +1 ULP:  Max ULP = 1 (injects +1 ULP error)
+//   - Sanity +5 ULP:  Max ULP = 5 (injects +5 ULP error)
+
+/**
+ * @brief Sanity check: Returns exact reference value
+ *
+ * This method returns the bf16-rounded reference GELU value.
+ * It should show EXACTLY 0 ULP for all inputs, proving that:
+ * 1. The reference function is correctly computing GELU
+ * 2. The ULP measurement is correctly comparing values
+ * 3. The bf16 conversion is consistent
+ *
+ * If this shows non-zero ULP, there's a bug in the measurement framework.
+ */
+std::bfloat16_t gelu_sanity_perfect(std::bfloat16_t x_bf16) {
+    double ref = gelu_reference_f64(static_cast<double>(static_cast<float>(x_bf16)));
+    return static_cast<std::bfloat16_t>(static_cast<float>(ref));
+}
+
+/**
+ * @brief Sanity check: Injects exactly +1 ULP error
+ *
+ * Takes the correct bf16 reference and adds 1 to its bit representation.
+ * Should show EXACTLY Max ULP = 1 for all non-edge-case inputs.
+ *
+ * Edge cases where this may show 0 ULP:
+ * - At bf16 max value (can't add 1 ULP)
+ * - At infinity boundaries
+ */
+std::bfloat16_t gelu_sanity_1ulp(std::bfloat16_t x_bf16) {
+    double ref = gelu_reference_f64(static_cast<double>(static_cast<float>(x_bf16)));
+    std::bfloat16_t ref_bf16 = static_cast<std::bfloat16_t>(static_cast<float>(ref));
+
+    uint16_t bits = bfloat16_to_bits(ref_bf16);
+
+    // Handle sign: for negative values, adding 1 to bits moves away from zero
+    // For positive values, adding 1 to bits also moves away from zero
+    // This ensures we always inject +1 ULP error in magnitude
+    bool is_negative = (bits & 0x8000) != 0;
+    uint16_t magnitude = bits & 0x7FFF;
+
+    // Don't overflow - check for max finite value
+    if (magnitude < 0x7F7F) {  // Max finite bf16 magnitude
+        if (is_negative) {
+            // For negative, adding to magnitude makes it more negative (larger |error|)
+            bits = 0x8000 | (magnitude + 1);
+        } else {
+            // For positive, adding to magnitude makes it larger
+            bits = magnitude + 1;
+        }
+    }
+
+    return bits_to_bfloat16(bits);
+}
+
+/**
+ * @brief Sanity check: Injects exactly +5 ULP error
+ *
+ * Takes the correct bf16 reference and adds 5 to its bit representation.
+ * Should show EXACTLY Max ULP = 5 for all non-edge-case inputs.
+ */
+std::bfloat16_t gelu_sanity_5ulp(std::bfloat16_t x_bf16) {
+    double ref = gelu_reference_f64(static_cast<double>(static_cast<float>(x_bf16)));
+    std::bfloat16_t ref_bf16 = static_cast<std::bfloat16_t>(static_cast<float>(ref));
+
+    uint16_t bits = bfloat16_to_bits(ref_bf16);
+
+    bool is_negative = (bits & 0x8000) != 0;
+    uint16_t magnitude = bits & 0x7FFF;
+
+    // Don't overflow
+    if (magnitude <= 0x7F7F - 5) {
+        if (is_negative) {
+            bits = 0x8000 | (magnitude + 5);
+        } else {
+            bits = magnitude + 5;
+        }
+    }
+
+    return bits_to_bfloat16(bits);
+}
+
+/**
+ * @brief Sanity check: Injects exactly +100 ULP error
+ *
+ * Takes the correct bf16 reference and adds 100 to its bit representation.
+ * Should show EXACTLY Max ULP = 100 for all non-edge-case inputs.
+ * This tests detection of larger errors similar to what real methods produce.
+ */
+std::bfloat16_t gelu_sanity_100ulp(std::bfloat16_t x_bf16) {
+    double ref = gelu_reference_f64(static_cast<double>(static_cast<float>(x_bf16)));
+    std::bfloat16_t ref_bf16 = static_cast<std::bfloat16_t>(static_cast<float>(ref));
+
+    uint16_t bits = bfloat16_to_bits(ref_bf16);
+
+    bool is_negative = (bits & 0x8000) != 0;
+    uint16_t magnitude = bits & 0x7FFF;
+
+    // Don't overflow
+    if (magnitude <= 0x7F7F - 100) {
+        if (is_negative) {
+            bits = 0x8000 | (magnitude + 100);
+        } else {
+            bits = magnitude + 100;
+        }
+    }
+
+    return bits_to_bfloat16(bits);
+}
+
+// ============================================================================
 // G4: BACKWARD PASS - GELU DERIVATIVE
 // ============================================================================
 
@@ -3986,6 +4108,7 @@ void print_usage(const char* prog) {
     std::cout << "  --range-scale   E3: Range-scaled approximation" << std::endl;
     std::cout << "  --denormal      E5/E8: Denormal and FTZ policy testing" << std::endl;
     std::cout << "  --softmax-unit  H2: GELU-Softmax combined unit" << std::endl;
+    std::cout << "  --sanity        ULP measurement sanity check (verify framework)" << std::endl;
     std::cout << "  --all           Run all modes" << std::endl;
     std::cout << "  --help          Show this help message" << std::endl;
 }
@@ -4012,6 +4135,7 @@ int main(int argc, char* argv[]) {
     bool do_denormal = false;
     bool do_softmax_unit = false;
     bool do_tail_debug = false;
+    bool do_sanity = false;
 
     // Parse command line arguments
     if (argc == 1) {
@@ -4054,6 +4178,8 @@ int main(int argc, char* argv[]) {
                 do_softmax_unit = true;
             } else if (arg == "--tail-debug") {
                 do_tail_debug = true;
+            } else if (arg == "--sanity") {
+                do_sanity = true;
             } else if (arg == "--all") {
                 do_analyze = true;
                 do_diagnose = true;
@@ -4194,6 +4320,55 @@ int main(int argc, char* argv[]) {
     // Run tail ULP debug analysis if requested
     if (do_tail_debug) {
         analyze_tail_ulp_distribution(ulp_calc);
+    }
+
+    // Run ULP measurement sanity check if requested
+    if (do_sanity) {
+        std::cout << "\n================================================================" << std::endl;
+        std::cout << "        ULP MEASUREMENT SANITY CHECK                           " << std::endl;
+        std::cout << "================================================================" << std::endl;
+        std::cout << "\nVerifying ULP measurement framework over entire bf16 range..." << std::endl;
+        std::cout << "These methods inject KNOWN errors to verify detection.\n" << std::endl;
+
+        std::vector<std::pair<std::string, std::function<std::bfloat16_t(std::bfloat16_t)>>> sanity_methods = {
+            {"SANITY: Perfect (expect Max=0)", gelu_sanity_perfect},
+            {"SANITY: +1 ULP (expect Max=1)", gelu_sanity_1ulp},
+            {"SANITY: +5 ULP (expect Max=5)", gelu_sanity_5ulp},
+            {"SANITY: +100 ULP (expect Max=100)", gelu_sanity_100ulp},
+        };
+
+        bool all_passed = true;
+        int expected_max[] = {0, 1, 5, 100};
+        int idx = 0;
+
+        for (const auto& [name, fn] : sanity_methods) {
+            UlpStats stats = analyze_gelu_implementation(name, fn, ulp_calc);
+
+            // Check if result matches expectation
+            bool passed = (stats.max_ulp == expected_max[idx]);
+            std::cout << "--- " << name << " ---" << std::endl;
+            std::cout << "  Expected Max ULP: " << expected_max[idx] << std::endl;
+            std::cout << "  Actual Max ULP:   " << stats.max_ulp << std::endl;
+            std::cout << "  Result: " << (passed ? "PASS" : "FAIL") << std::endl;
+
+            if (!passed) {
+                all_passed = false;
+                std::cout << "  WARNING: ULP measurement mismatch!" << std::endl;
+                std::cout << "  Worst input: " << static_cast<float>(stats.worst_input)
+                          << " (0x" << std::hex << bfloat16_to_bits(stats.worst_input)
+                          << std::dec << ")" << std::endl;
+            }
+            std::cout << std::endl;
+            idx++;
+        }
+
+        std::cout << "================================================================" << std::endl;
+        if (all_passed) {
+            std::cout << "  SANITY CHECK PASSED - ULP measurement framework is correct" << std::endl;
+        } else {
+            std::cout << "  SANITY CHECK FAILED - ULP measurement has issues!" << std::endl;
+        }
+        std::cout << "================================================================" << std::endl;
     }
 
     // Run full analysis if requested
