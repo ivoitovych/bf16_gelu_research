@@ -10,96 +10,96 @@ This document contains four independently developed strategy lists for GELU appr
 # Final List 1:
 
 
-Ось **Final List** (синтез найкращого з Consolidated Lists 1–4 + рев’ю), у вигляді чіткої таксономії **A–G + R**, з “Quick formulas” і фазами впровадження. 
+This is the **Final List** (synthesis of the best from Consolidated Lists 1–4 + review), as a clear taxonomy **A–G + R**, with "Quick formulas" and implementation phases.
 
-## A. Прямі апроксимації GELU (без підфункцій)
+## A. Direct GELU Approximations (without sub-functions)
 
-* **A1. Minimax-поліном (Remez)**: степені 5/7/9 на обраному діапазоні; обчислення Horner (FMA) або Estrin (паралельно).
-* **A2. Раціональна функція (Padé/minimax)**:
-  (\mathrm{GELU}(x)\approx x\cdot \dfrac{P_n(x^2)}{Q_m(x^2)}) (парні степені для симетрії); порядки [3/3], [4/4], [5/5].
-* **A3. Chebyshev-поліном**: альтернатива minimax, коли потрібно “контрольоване” коливання похибки й простіша побудова.
-* **A4. Continued fraction (ланцюговий дріб)**: як альтернативний “раціональний” базис (інколи зручніший у хвостах).
+* **A1. Minimax polynomial (Remez)**: degrees 5/7/9 on selected range; evaluation via Horner (FMA) or Estrin (parallel).
+* **A2. Rational function (Padé/minimax)**:
+  (\mathrm{GELU}(x)\approx x\cdot \dfrac{P_n(x^2)}{Q_m(x^2)}) (even powers for symmetry); orders [3/3], [4/4], [5/5].
+* **A3. Chebyshev polynomial**: alternative to minimax when "controlled" error oscillation and simpler construction is needed.
+* **A4. Continued fraction**: as an alternative "rational" basis (sometimes more convenient in tails).
 
-## B. Через підфункції (але теж тільки арифметика)
+## B. Via sub-functions (but also arithmetic only)
 
-* **B1. Sigmoid-based без exp**: (\mathrm{GELU}(x)\approx x\cdot\sigma(kx)), де (\sigma) — раціонал / PWL, з (|z|).
-* **B2. Tanh-форма + апроксимація tanh**:
-  (0.5x(1+\tanh(\alpha(x+\beta x^3)))), де (\tanh) замінити непарним раціоналом або minimax-поліномом (K-TanH style).
-* **B3. Поліном erf → (\Phi) → GELU**: (\Phi(x)=0.5(1+\mathrm{erf}(x/\sqrt2))), де erf — непарний поліном + clamp до ±1.
-* **B4. Раціональний erf/(\Phi) з range reduction**: окремі фіти для “ядра” й “хвостів”, віддзеркалення по знаку + сатурація.
+* **B1. Sigmoid-based without exp**: (\mathrm{GELU}(x)\approx x\cdot\sigma(kx)), where (\sigma) is rational / PWL, with (|z|).
+* **B2. Tanh-form + tanh approximation**:
+  (0.5x(1+\tanh(\alpha(x+\beta x^3)))), where (\tanh) is replaced by odd rational or minimax polynomial (K-TanH style).
+* **B3. Erf polynomial → (\Phi) → GELU**: (\Phi(x)=0.5(1+\mathrm{erf}(x/\sqrt2))), where erf is odd polynomial + clamp to ±1.
+* **B4. Rational erf/(\Phi) with range reduction**: separate fits for "core" and "tails", sign mirroring + saturation.
 
-## C. Piecewise-методи (найсильніший важіль для max-ULP)
+## C. Piecewise methods (strongest lever for max-ULP)
 
-* **C1. Piecewise-polynomial / сплайни**: квадр./кубічні, 4–16 сегментів; C¹/C² узгодження на стиках; оптимізація вузлів.
-* **C2. Piecewise-rational**: різні Padé на сегментах; менше сегментів для тієї ж точності.
+* **C1. Piecewise-polynomial / splines**: quadratic/cubic, 4–16 segments; C¹/C² continuity at joints; knot optimization.
+* **C2. Piecewise-rational**: different Padé per segment; fewer segments for the same accuracy.
 * **C3. Piecewise-linear (PWL)**:
 
-  * ISPA-style (симетрія, 8–16 сегментів),
-  * NLI (неоднорідні вузли через dynamic programming),
-  * ReLU-network → екстракція breakpoints/slopes (автоматичний PWL-фіт).
-* **C4. Asymptotic saturation + core**: хвости (\approx 0) / (\approx x); “ядро” (наприклад ([-3,3])) — poly/rational; гладке зшивання на межах.
-* **C5. EPSS (error-peak driven knot refinement)**: ітеративно підтискати вузли/сегменти у точках піків похибки.
+  * ISPA-style (symmetry, 8–16 segments),
+  * NLI (non-uniform knots via dynamic programming),
+  * ReLU-network → extraction of breakpoints/slopes (automatic PWL fit).
+* **C4. Asymptotic saturation + core**: tails (\approx 0) / (\approx x); "core" (e.g., ([-3,3])) — poly/rational; smooth stitching at boundaries.
+* **C5. EPSS (error-peak driven knot refinement)**: iteratively push knots/segments toward error peak locations.
 
-## D. Гібриди та LUT (reference-friendly, також good baselines)
+## D. Hybrids and LUT (reference-friendly, also good baselines)
 
-* **D1. LUT + інтерполяція**: таблиця для (\Phi(x)) або (\mathrm{GELU}(x)/x), лінійна/квадратична інтерполяція.
-* **D2. LUT-хвости + поліном-центр**: хвости таблично (стабільність), центр — minimax poly/rational.
-* **D3. LUT + “polynomial correction”**: грубий LUT + низький степінь для поправки.
-* **D4. Non-uniform LUT spacing**: вузли не рівномірні (оптимізуються під max-ULP / worst-case).
+* **D1. LUT + interpolation**: table for (\Phi(x)) or (\mathrm{GELU}(x)/x), linear/quadratic interpolation.
+* **D2. LUT-tails + polynomial-center**: tails via table (stability), center — minimax poly/rational.
+* **D3. LUT + "polynomial correction"**: coarse LUT + low degree for correction.
+* **D4. Non-uniform LUT spacing**: knots are non-uniform (optimized for max-ULP / worst-case).
 
-## E. BF16-орієнтовані “knobs” (накладаються на будь-який метод)
+## E. BF16-oriented "knobs" (apply to any method)
 
-* **E1. Обмеження монотонності/меж**: (0\le \Phi \le 1), монотонність, контроль похідної, уникнення “петель” через округлення.
-* **E2. Ціль оптимізації — max-ULP** (не L2/MSE): fit під worst-case.
-* **E3. Цикл квантування коефіцієнтів**: fit → quantize (bf16/fp16) → repair/refit → повторити.
-* **E4. Range scaling / reduction**: фіт на (x/s), підігнати пороги під “експонентні зони” bf16.
-* **E5. Обмеження вузлів/порогів**: breakpoints лише representable (часто pow2) + симетрія.
-* **E6. FMA vs non-FMA варіанти**: окремі набори коефіцієнтів/форми (Horner vs Estrin).
-* **E7. Robustness / sensitivity**: тест стійкості до ±1 ULP у коефіцієнтах і до дрібних змін порогів.
-* **E8. Denormals/FTZ policy**: явний clamp/flush-to-zero та перевірка впливу на хвости й динамічний діапазон.
+* **E1. Monotonicity/bounds constraints**: (0\le \Phi \le 1), monotonicity, derivative control, avoiding "loops" due to rounding.
+* **E2. Optimization target — max-ULP** (not L2/MSE): fit for worst-case.
+* **E3. Coefficient quantization cycle**: fit → quantize (bf16/fp16) → repair/refit → repeat.
+* **E4. Range scaling / reduction**: fit on (x/s), align thresholds with bf16 "exponent zones".
+* **E5. Breakpoint/threshold constraints**: breakpoints only representable (often pow2) + symmetry.
+* **E6. FMA vs non-FMA variants**: separate coefficient sets/forms (Horner vs Estrin).
+* **E7. Robustness / sensitivity**: test stability to ±1 ULP in coefficients and to small threshold changes.
+* **E8. Denormals/FTZ policy**: explicit clamp/flush-to-zero and verification of impact on tails and dynamic range.
 
-## F. Еталони (ground truth) для ULP-вимірювання
+## F. Reference (ground truth) for ULP measurement
 
-* **F1. High-precision GELU** (float64/MPFR) як “істина”.
-* **F2. Чисельна квадратура для (\Phi(x))** (Gauss/Simpson) як “арифметика-only” reference (повільно, але корисно).
-* **F3. Continued fraction erf/(\Phi)** як альтернативний стабільний reference-block.
-* **F4. “Документований” поліном erf (baseline)** з відомими межами похибки (для стартового порівняння).
+* **F1. High-precision GELU** (float64/MPFR) as "truth".
+* **F2. Numerical quadrature for (\Phi(x))** (Gauss/Simpson) as "arithmetic-only" reference (slow, but useful).
+* **F3. Continued fraction erf/(\Phi)** as alternative stable reference block.
+* **F4. "Documented" erf polynomial (baseline)** with known error bounds (for initial comparison).
 
-## G. Методологія оцінювання (ULP-first)
+## G. Evaluation methodology (ULP-first)
 
-* **G1. Метрики**: max-ULP / mean-ULP / p99-ULP + “worst-case input” лог.
-* **G2. Пошук worst-case**: щільна сітка + локальне уточнення; фокус: near 0, стики сегментів, пороги сатурації.
-* **G3. Регіональний аналіз**: near-zero / core / tails, окремо для (x<0) і (x>0).
-* **G4. Симуляція округлення bf16 per-op** (і окремо сценарій fp32-accum vs bf16-accum).
-* **G5. Порівняння FMA/non-FMA** як окремий експеримент.
-* **G6. Backward pass**: похідна (\mathrm{GELU}') (аналітична від апроксимації або окремий fit) + узгодження гладкості.
-* **G7. Cost model**: mul/add/div, гілки, LUT loads, векторизаційна дружність.
-* **G8. Regression suite**: фіксовані діапазони/сиди + “adversarial points” (стики/пороги/near-zero).
+* **G1. Metrics**: max-ULP / mean-ULP / p99-ULP + "worst-case input" log.
+* **G2. Worst-case search**: dense grid + local refinement; focus: near 0, segment joints, saturation thresholds.
+* **G3. Regional analysis**: near-zero / core / tails, separately for (x<0) and (x>0).
+* **G4. bf16 per-op rounding simulation** (and separately fp32-accum vs bf16-accum scenario).
+* **G5. FMA/non-FMA comparison** as a separate experiment.
+* **G6. Backward pass**: derivative (\mathrm{GELU}') (analytic from approximation or separate fit) + smoothness matching.
+* **G7. Cost model**: mul/add/div, branches, LUT loads, vectorization friendliness.
+* **G8. Regression suite**: fixed ranges/seeds + "adversarial points" (joints/thresholds/near-zero).
 
-## R. Рекомендований мінімальний baseline-набір (щоб швидко стартувати порівняння)
+## R. Recommended minimal baseline set (to quickly start comparison)
 
 * **R1. C4 saturation + core minimax polynomial (deg 7)**
 * **R2. A2 rational Padé/minimax [4/4] (direct GELU)**
-* **R3. C3 PWL (ISPA-style) з breakpoints, обмеженими до pow2/representable**
+* **R3. C3 PWL (ISPA-style) with breakpoints constrained to pow2/representable**
 * **R4. B2 tanh-form + odd rational tanh**
-* **R5. D1 LUT + linear interpolation** (як сильний reference серед “only arithmetic”)
+* **R5. D1 LUT + linear interpolation** (as strong reference among "only arithmetic")
 
-## Quick reference formulas (коротко)
+## Quick reference formulas (briefly)
 
 * **Tanh-form GELU**: (\mathrm{GELU}(x)\approx 0.5x\left(1+\tanh(\alpha(x+\beta x^3))\right))
-* **Rational tanh (приклад простого odd rational)**: (\tanh(z)\approx \dfrac{z(27+z^2)}{27+9z^2})
-* **Sigmoid simple (без exp)**: (\sigma(z)\approx 0.5+\dfrac{z}{2(1+|z|)})
+* **Rational tanh (example of simple odd rational)**: (\tanh(z)\approx \dfrac{z(27+z^2)}{27+9z^2})
+* **Sigmoid simple (without exp)**: (\sigma(z)\approx 0.5+\dfrac{z}{2(1+|z|)})
 * **GELU via sigmoid**: (\mathrm{GELU}(x)\approx x\cdot\sigma(kx))
-* **Saturation idea**: (x>T: \mathrm{GELU}\approx x;; x<-T: \mathrm{GELU}\approx 0) (T підбирається експериментально під ULP)
+* **Saturation idea**: (x>T: \mathrm{GELU}\approx x;; x<-T: \mathrm{GELU}\approx 0) (T is tuned experimentally for ULP)
 
-## Implementation priority (фази)
+## Implementation priority (phases)
 
-* **Phase 0**: F1 + G1 + G8 (істина, ULP-фреймворк, регресія)
-* **Phase 1**: A1 + A2 + B1 + C4 (перші baselines)
-* **Phase 2**: C1 + C3 + B2 (кращий контроль max-ULP)
-* **Phase 3**: E1–E8 на “переможцях” (BF16-оптимізація)
-* **Phase 4**: G5 + G6 + G3 (FMA, backward, регіони)
-* **Phase 5 (optional/advanced)**: розширення гібридів LUT (D2–D4) і додаткові “research” ідеї лише за потреби
+* **Phase 0**: F1 + G1 + G8 (truth, ULP framework, regression)
+* **Phase 1**: A1 + A2 + B1 + C4 (first baselines)
+* **Phase 2**: C1 + C3 + B2 (better max-ULP control)
+* **Phase 3**: E1–E8 on "winners" (BF16 optimization)
+* **Phase 4**: G5 + G6 + G3 (FMA, backward, regions)
+* **Phase 5 (optional/advanced)**: extend hybrid LUTs (D2–D4) and additional "research" ideas only as needed
 
 
 
