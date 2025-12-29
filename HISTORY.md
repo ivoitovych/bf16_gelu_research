@@ -1434,3 +1434,61 @@ All 4 sanity checks pass:
    - bf16 conversion is consistent
 
 3. **Framework is verified correct**: All sanity checks pass, confirming the ULP measurement infrastructure is working as designed.
+
+## Session 15: R5 Pure - LUT with Asymptotic Tail
+
+### Objective
+Create R5 Pure variant that uses asymptotic expansion for deep tail instead of two-tier tail LUT, following the same pattern as B3 Pure vs B3 Erf Poly.
+
+### Background
+R5 LUT achieves excellent results (Max ULP 87, Mean ULP 0.07) but is limited by tail LUT interpolation error. The same asymptotic expansion that made B3 Pure achieve Max ULP 33 can be applied to R5.
+
+### Implementation
+
+Added `gelu_r5_pure()` to `gelu_implementations.cpp`:
+
+```cpp
+std::bfloat16_t gelu_r5_pure(std::bfloat16_t x_bf16) {
+    // Positive saturation: x >= 3
+    if (x >= thresholds::POS) return x;
+
+    // Negative tail: x < -3, use asymptotic expansion
+    if (x < -3.0f) return gelu_asymptotic(x);
+
+    // Core region: LUT with linear interpolation
+    // Uses precomputed phi_table via g_lut.get_phi()
+    float phi = lerp(g_lut.get_phi(idx), g_lut.get_phi(idx+1), frac);
+    return x * phi;
+}
+```
+
+**Key differences from R5 LUT:**
+- Tail threshold changed from -3.5 to -3.0 (matching B3 Pure)
+- Uses `gelu_asymptotic()` directly instead of `gelu_negative_tail()` (which uses tail LUT)
+- Added `get_phi()` accessor to `GeLU_LUT` class for precomputed table access
+
+### Results
+
+| Metric | R5 LUT | R5 Pure | B3 Pure |
+|--------|--------|---------|---------|
+| Max ULP | 87 | **33** | 33 |
+| Mean ULP | 0.0722 | **0.0032** | 0.0119 |
+| nz Max | 1 | 1 | 0 |
+| cp Max | 0 | 0 | 1 |
+| cn Max | 1 | **1** | 23 |
+| tn Max | 87 | **33** | 33 |
+
+**R5 Pure ties B3 Pure for best Max ULP (33) but has 3× better Mean ULP (0.003 vs 0.01).**
+
+### Why R5 Pure Has Better Mean ULP
+
+R5 Pure uses a 512-entry LUT in the core region [-3, 3], providing more precise Φ(x) values than B3 Pure's polynomial approximation. B3 Pure's Abramowitz-Stegun rational approximation has higher error in core_neg region (cn Max 23 vs 1).
+
+### Files Modified
+- `gelu_implementations.cpp`: Added `gelu_r5_pure()`, `get_phi()` accessor
+- `README.md`: Added R5 Pure to results table, updated method count (27), updated Key Achievements
+- `HISTORY.md`: This session documentation
+
+### Key Insight
+
+The pattern of "Pure" variants (using asymptotic tail instead of LUT) can be applied to any method that currently uses the two-tier tail LUT. The asymptotic expansion is mathematically superior for deep tail because it correctly captures the exponential decay behavior, while LUT interpolation introduces discretization error.

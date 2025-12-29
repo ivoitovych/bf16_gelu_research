@@ -43,7 +43,7 @@ g++ -std=c++23 -O3 -march=native -o gelu_analysis gelu_implementations.cpp -lm
 
 ## Current Status
 
-**100% taxonomy coverage (40/40 methods). Best: B3 Pure with Max ULP = 33.**
+**100% taxonomy coverage (41/41 methods). Best: R5 Pure and B3 Pure tied at Max ULP = 33.**
 
 See [README.md](README.md) for complete results table with per-region analysis.
 
@@ -51,7 +51,8 @@ See [README.md](README.md) for complete results table with per-region analysis.
 
 | Method | Max ULP | Notes |
 |--------|---------|-------|
-| **B3 Pure** | **33** | Best - asymptotic expansion, no LUT |
+| **R5 Pure** | **33** | LUT core + asymptotic tail, best Mean ULP (0.003) |
+| **B3 Pure** | **33** | Pure arithmetic, asymptotic expansion |
 | R5/C1/B3/D2/F2/F3 | 87 | Limited by tail LUT interpolation |
 | D4 | 88 | Non-uniform LUT |
 | R4 | 166 | Boundary at x=-3.5 |
@@ -111,3 +112,4 @@ See [HISTORY.md](HISTORY.md) for detailed session-by-session development notes c
 - Session 12: erfc + asymptotic expansion (Max ULP 87→33 for B3 Pure)
 - Session 13: Tenstorrent hardware reference benchmarks (TT Accurate, TT Fast)
 - Session 14: ULP measurement sanity check framework (--sanity flag)
+- Session 15: R5 Pure - LUT with asymptotic tail (ties B3 Pure at Max ULP 33, best Mean ULP 0.003)
