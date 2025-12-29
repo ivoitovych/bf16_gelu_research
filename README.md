@@ -12,36 +12,38 @@ This project implements and evaluates multiple GELU approximation strategies opt
 
 ### Complete Results Table (All 26 Methods)
 
-Sorted by Max ULP. Region definitions: **nz** = near_zero (|x| < 0.5), **cp** = core_pos (0.5 ≤ x < 3), **cn** = core_neg (-3 ≤ x < -0.5), **tp** = tail_pos (x ≥ 3), **tn** = tail_neg (x < -3).
+Sorted by Max ULP. Region definitions: **nz** = near_zero (|x| < 0.5), **cp** = core_pos (0.5 ≤ x < 3), **cn** = core_neg (-3 ≤ x < -0.5), **tn** = tail_neg (x < -3).
 
-| Method | Mean | Max | nz Mean | nz Max | cp Mean | cp Max | cn Mean | cn Max | tp Mean | tp Max | tn Mean | tn Max |
-|--------|------|-----|---------|--------|---------|--------|---------|--------|---------|--------|---------|--------|
-| **B3 Pure** | **0.01** | **33** | 0.00 | 0 | 0.04 | 1 | 2.03 | 23 | 0.00 | 0 | 0.01 | 33 |
-| R5 LUT | 0.07 | 87 | 0.00 | 1 | 0.00 | 0 | 0.03 | 1 | 0.00 | 0 | 0.29 | 87 |
-| B3 Erf Poly | 0.11 | 87 | 0.00 | 0 | 0.04 | 1 | 2.03 | 23 | 0.00 | 0 | 0.40 | 87 |
-| C1 Spline | 0.10 | 87 | 0.00 | 1 | 0.07 | 1 | 4.09 | 12 | 0.00 | 0 | 0.31 | 87 |
-| D2 LUT+Erf | 0.11 | 87 | 0.00 | 0 | 0.04 | 1 | 2.03 | 23 | 0.00 | 0 | 0.40 | 87 |
-| F2 Quadrature | 0.11 | 87 | 0.00 | 0 | 0.12 | 1 | 1.94 | 23 | 0.00 | 0 | 0.40 | 87 |
-| F3 CF Erf | 0.12 | 87 | 0.00 | 0 | 0.40 | 3 | 3.90 | 23 | 0.00 | 0 | 0.40 | 87 |
-| D4 Non-uniform | 0.60 | 88 | 0.74 | 88 | 1.45 | 7 | 29.16 | 62 | 0.00 | 0 | 0.35 | 87 |
-| R4 Tanh | 0.11 | 166 | 0.00 | 1 | 0.03 | 1 | 1.75 | 29 | 0.00 | 0 | 0.42 | 166 |
-| B4 Rational | 0.56 | 535 | 0.00 | 1 | 2.07 | 5 | 54.32 | 314 | 0.00 | 0 | 1.13 | 535 |
-| B1v2 Sigmoid | 1.47 | 625 | 0.93 | 106 | 13.91 | 40 | 129.44 | 352 | 0.00 | 0 | 1.25 | 625 |
-| D3 LUT+Corr | 1.82 | 830 | 0.82 | 94 | 23.27 | 53 | 185.06 | 440 | 0.00 | 0 | 1.55 | 830 |
-| R3 PWL | 36.82 | 832 | 72.59 | 98 | 1.50 | 6 | 112.68 | 518 | 0.00 | 0 | 1.58 | 832 |
-| C2 Piecewise | 1.15 | 881 | 0.00 | 1 | 4.35 | 27 | 135.89 | 881 | 0.00 | 0 | 1.86 | 870 |
-| B1 Sigmoid | 1.64 | 1068 | 0.50 | 35 | 10.81 | 24 | 166.64 | 759 | 0.00 | 0 | 2.10 | 1068 |
-| E3 Range-Scale | 1.72 | 1130 | 0.07 | 21 | 5.98 | 15 | 225.87 | 822 | 0.00 | 0 | 2.22 | 1130 |
-| H2 GELU-Softmax | 1.31 | 1130 | 0.25 | 18 | 1.91 | 4 | 126.82 | 822 | 0.00 | 0 | 2.22 | 1130 |
-| R2 Rational | 1.19 | 1139 | 0.00 | 1 | 5.02 | 17 | 126.52 | 775 | 0.00 | 0 | 2.18 | 1139 |
-| A4 Cont.Frac | 1.71 | 1206 | 0.02 | 7 | 18.07 | 36 | 208.65 | 866 | 0.00 | 0 | 2.34 | 1206 |
-| A3 Chebyshev | 2.54 | 1207 | 0.57 | 62 | 47.73 | 65 | 292.26 | 900 | 0.00 | 0 | 2.37 | 1207 |
-| H3 SoftEx | 1.26 | 1247 | 0.00 | 1 | 4.96 | 28 | 130.29 | 861 | 0.00 | 0 | 2.38 | 1247 |
-| R1 Poly-9 | 1.40 | 1312 | 0.00 | 1 | 7.38 | 40 | 150.88 | 926 | 0.00 | 0 | 2.50 | 1312 |
-| A1 Poly-9 | 3.56 | 1404 | 0.88 | 122 | 10.87 | 29 | 475.34 | 1211 | 0.00 | 0 | 2.94 | 1404 |
-| A1 Poly-7 | 3.58 | 1547 | 0.88 | 122 | 10.81 | 28 | 476.75 | 1211 | 0.00 | 0 | 3.02 | 1547 |
-| **TT Accurate*** | 3224.82 | 14330 | 6482.37 | 14330 | 0.03 | 1 | 0.39 | 4 | 0.00 | 0 | 87.73 | 13245 |
-| **TT Fast*** | 15782.90 | 32639 | 19710.55 | 28802 | 0.64 | 5 | 477.71 | 1211 | 0.00 | 0 | 24357.40 | 32639 |
+> **Note**: The tail_pos region (x ≥ 3) achieves **exactly 0 ULP for all methods** because GELU(x) = x·Φ(x) ≈ x when Φ(x) → 1, and the saturation `GELU(x) = x` is mathematically exact.
+
+| Method | *Mean* | *Max* | nz Mean | nz Max | cp Mean | cp Max | cn Mean | cn Max | tn Mean | tn Max |
+|--------|--------|-------|---------|--------|---------|--------|---------|--------|---------|--------|
+| **B3 Pure** | ***0.01*** | ***33*** | 0.00 | 0 | 0.04 | 1 | 2.03 | 23 | 0.01 | 33 |
+| R5 LUT | *0.07* | *87* | 0.00 | 1 | 0.00 | 0 | 0.03 | 1 | 0.29 | 87 |
+| B3 Erf Poly | *0.11* | *87* | 0.00 | 0 | 0.04 | 1 | 2.03 | 23 | 0.40 | 87 |
+| C1 Spline | *0.10* | *87* | 0.00 | 1 | 0.07 | 1 | 4.09 | 12 | 0.31 | 87 |
+| D2 LUT+Erf | *0.11* | *87* | 0.00 | 0 | 0.04 | 1 | 2.03 | 23 | 0.40 | 87 |
+| F2 Quadrature | *0.11* | *87* | 0.00 | 0 | 0.12 | 1 | 1.94 | 23 | 0.40 | 87 |
+| F3 CF Erf | *0.12* | *87* | 0.00 | 0 | 0.40 | 3 | 3.90 | 23 | 0.40 | 87 |
+| D4 Non-uniform | *0.60* | *88* | 0.74 | 88 | 1.45 | 7 | 29.16 | 62 | 0.35 | 87 |
+| R4 Tanh | *0.11* | *166* | 0.00 | 1 | 0.03 | 1 | 1.75 | 29 | 0.42 | 166 |
+| B4 Rational | *0.56* | *535* | 0.00 | 1 | 2.07 | 5 | 54.32 | 314 | 1.13 | 535 |
+| B1v2 Sigmoid | *1.47* | *625* | 0.93 | 106 | 13.91 | 40 | 129.44 | 352 | 1.25 | 625 |
+| D3 LUT+Corr | *1.82* | *830* | 0.82 | 94 | 23.27 | 53 | 185.06 | 440 | 1.55 | 830 |
+| R3 PWL | *36.82* | *832* | 72.59 | 98 | 1.50 | 6 | 112.68 | 518 | 1.58 | 832 |
+| C2 Piecewise | *1.15* | *881* | 0.00 | 1 | 4.35 | 27 | 135.89 | 881 | 1.86 | 870 |
+| B1 Sigmoid | *1.64* | *1068* | 0.50 | 35 | 10.81 | 24 | 166.64 | 759 | 2.10 | 1068 |
+| E3 Range-Scale | *1.72* | *1130* | 0.07 | 21 | 5.98 | 15 | 225.87 | 822 | 2.22 | 1130 |
+| H2 GELU-Softmax | *1.31* | *1130* | 0.25 | 18 | 1.91 | 4 | 126.82 | 822 | 2.22 | 1130 |
+| R2 Rational | *1.19* | *1139* | 0.00 | 1 | 5.02 | 17 | 126.52 | 775 | 2.18 | 1139 |
+| A4 Cont.Frac | *1.71* | *1206* | 0.02 | 7 | 18.07 | 36 | 208.65 | 866 | 2.34 | 1206 |
+| A3 Chebyshev | *2.54* | *1207* | 0.57 | 62 | 47.73 | 65 | 292.26 | 900 | 2.37 | 1207 |
+| H3 SoftEx | *1.26* | *1247* | 0.00 | 1 | 4.96 | 28 | 130.29 | 861 | 2.38 | 1247 |
+| R1 Poly-9 | *1.40* | *1312* | 0.00 | 1 | 7.38 | 40 | 150.88 | 926 | 2.50 | 1312 |
+| A1 Poly-9 | *3.56* | *1404* | 0.88 | 122 | 10.87 | 29 | 475.34 | 1211 | 2.94 | 1404 |
+| A1 Poly-7 | *3.58* | *1547* | 0.88 | 122 | 10.81 | 28 | 476.75 | 1211 | 3.02 | 1547 |
+| **TT Accurate*** | *3224.82* | *14330* | 6482.37 | 14330 | 0.03 | 1 | 0.39 | 4 | 87.73 | 13245 |
+| **TT Fast*** | *15782.90* | *32639* | 19710.55 | 28802 | 0.64 | 5 | 477.71 | 1211 | 24357.40 | 32639 |
 
 *\*TT Accurate/Fast are Tenstorrent hardware reference benchmarks (not optimized for full bf16 range)*
 
@@ -230,194 +232,492 @@ All implementations use only basic arithmetic:
 - **Allowed**: `+`, `-`, `*`, `/`, `|x|`, `sign()`
 - **Prohibited**: `erf()`, `tanh()`, `exp()`, `log()` (except in reference implementation)
 
+### Mathematical Foundation
+
+The GELU function and its key properties:
+
+```
+GELU(x) = x · Φ(x)
+
+where Φ(x) = ½(1 + erf(x/√2))  is the CDF of standard normal distribution
+
+Key properties:
+  • Φ(0) = 0.5, so GELU(0) = 0
+  • Φ(x) → 1 as x → +∞, so GELU(x) → x
+  • Φ(x) → 0 as x → -∞, so GELU(x) → 0
+  • GELU has a minimum at x ≈ -0.75 where GELU ≈ -0.17
+  • GELU'(x) = Φ(x) + x·φ(x), where φ(x) = exp(-x²/2)/√(2π)
+```
+
+The approximation challenge is computing `erf(z)` without transcendental functions.
+
+---
+
 ### Methods
 
-#### B3 Pure: Erf (No LUT) - Best Method
-```
-Pure arithmetic erf approximation with asymptotic tail:
-- Core: Piecewise erf (Taylor + A-S rational)
-- Deep tail (x < -8.3125): Asymptotic expansion
-  GELU(x) ≈ -φ(x) * (1 - 1/x² + 3/x⁴ - 15/x⁶)
-  where φ(x) = exp(-x²/2) / √(2π)
-- exp() approximated via 2^x with IEEE754 bit manipulation
-```
-**Best performer with Mean ULP 0.01, Max ULP 33.** No LUT required.
+#### B3 Pure: Erf Approximation with Asymptotic Tail ⭐ Best Method
 
-#### C1: Cubic Spline
-```
-9-segment Hermite cubic interpolation with:
-- Knots at: -4, -3, -2, -1, -0.5, 0, 0.5, 1, 2, 4
-- Fritsch-Carlson monotonicity clamping
-- Taylor approximation for |x| < 0.125
-```
-Mean ULP 0.10, Max ULP 87 (limited by tail LUT).
+**Mathematical basis**: Approximate `erf(z)` piecewise, then use asymptotic expansion for deep tail.
 
-#### B3: Erf Polynomial
+**Core region (|x| ≤ 8.3125)**:
 ```
-Piecewise erf approximation:
-- |z| < 1: Taylor series
-- |z| ≥ 1: Abramowitz-Stegun rational approximation
-- Uses tail LUT for x < -3.5
-```
-Mean ULP 0.11, Max ULP 87 (limited by tail LUT).
+For z = x/√2:
 
-#### B1: Sigmoid-Based GELU
-```
-GELU(x) ≈ x · σ(1.702x)
-σ(z) ≈ 0.5 + z / (2(1 + |z|))
-```
-Simple rational sigmoid approximation. Mean ULP 1.64, Max ULP 1068.
+If |z| < 1:  Use Taylor series
+  erf(z) ≈ (2/√π) · z · (1 - z²/3 + z⁴/10 - z⁶/42 + z⁸/216)
 
-#### B1v2: Quadratic Sigmoid GELU
-```
-GELU(x) ≈ x · σ(1.702x)
-σ(z) ≈ 0.5 + 0.5·z / √(1 + z²)
-```
-Uses hardware-accelerated sqrt for better accuracy. Mean ULP 1.47, Max ULP 625.
+If |z| ≥ 1:  Use Abramowitz-Stegun rational (7.1.26)
+  erf(z) ≈ 1 - (a₁t + a₂t² + a₃t³ + a₄t⁴) · exp(-z²)
+  where t = 1/(1 + p|z|), p = 0.3275911
 
-#### R1: Saturation + Polynomial Core
+Then: Φ(x) = 0.5 · (1 + erf(z))   for x ≥ 0
+      Φ(x) = 0.5 · erfc(-z)       for x < 0  (avoids cancellation)
 ```
-x ≥ 3:  GELU(x) = x
-x ≤ -9: GELU(x) = 0
-else:   Φ(x) ≈ 0.5 + x·(a₁ + a₃x² + a₅x⁴ + a₇x⁶ + a₉x⁸)
-```
-9th-degree minimax polynomial with asymmetric saturation. Mean ULP 1.40, Max ULP 1312.
 
-#### R2: Rational Padé Approximation
+**Deep tail (x < -8.3125)**: Asymptotic expansion derived from Mills ratio:
 ```
-Φ(x) ≈ 0.5 + x · P(x²) / Q(x²)
-P, Q are [3/3] polynomials in x²
-```
-Better tail convergence than pure polynomials. Mean ULP 1.19, Max ULP 1139.
+For large negative x, Φ(x) has the asymptotic expansion:
+  Φ(x) ≈ φ(x)/|x| · (1 - 1/x² + 3/x⁴ - 15/x⁶ + 105/x⁸ - ...)
 
-#### R3: Piecewise Linear (PWL)
-```
-Power-of-2 breakpoints: 0, ±0.5, ±1, ±2, ±4
-Linear interpolation between segments
-```
-Fast evaluation but higher near-zero error. Mean ULP 36.82, Max ULP 832.
+Since GELU(x) = x·Φ(x) and x < 0:
+  GELU(x) ≈ -φ(x) · (1 - 1/x² + 3/x⁴ - 15/x⁶)
 
-#### R4: Tanh-Form + Rational Tanh
+where φ(x) = exp(-x²/2) / √(2π) is computed via:
+  exp(-u) = 2^(-u/ln2) using IEEE754 bit manipulation
 ```
-GELU(x) ≈ 0.5x(1 + tanh(√(2/π)(x + 0.044715x³)))
-tanh(z) ≈ z·(a₀ + a₁z² + a₂z⁴ + a₃z⁶) / (b₀ + b₁z² + b₂z⁴ + b₃z⁶)
-```
-[3,3] Padé approximant for tanh. Mean ULP 0.11, Max ULP 166.
+
+**Why it works**: The asymptotic series converges rapidly for |x| > 3 since each term is O(1/x²) smaller. Truncating at x⁻⁶ gives sufficient precision for bf16.
+
+**Result**: Mean ULP 0.01, Max ULP 33. No LUT required.
+
+---
 
 #### R5: LUT + Linear Interpolation
-```
-512-entry lookup table for Φ(x)
-Linear interpolation between entries
-Range: [-9, 3] with extended tail LUT
-```
-Mean ULP 0.07, Max ULP 87. Uses precomputed erf values with two-tier tail handler.
 
-#### A3: Chebyshev Polynomial
-```
-Chebyshev expansion on [-4, 4] mapped to [-1, 1]
-Clenshaw recurrence for stable evaluation
-Degree-9 with odd coefficients
-```
-Near-minimax with bounded oscillating error. Mean ULP 2.54, Max ULP 1207.
+**Mathematical basis**: Precompute exact Φ(x) values, interpolate between them.
 
-#### A4: Continued Fraction
 ```
-GELU(x) ≈ x · (a₀ + x²/(b₁ + x²/(b₂ + ...)))
-Depth-4 truncation
-```
-Alternative to Padé with different convergence. Mean ULP 1.71, Max ULP 1206.
+512-entry table storing Φ(xᵢ) for xᵢ ∈ [-9, 3] at step 0.0234375
 
-#### B4: Rational Erf with Range Reduction
-```
-|z| < 1: rational [2/2] Taylor-like
-|z| ≥ 1: Abramowitz-Stegun with exp factor
-Separate fits per range
-```
-Reduces polynomial degree requirements. Mean ULP 0.56, Max ULP 535.
+For input x:
+  1. Find interval: xᵢ ≤ x < xᵢ₊₁
+  2. Compute fraction: t = (x - xᵢ) / (xᵢ₊₁ - xᵢ)
+  3. Interpolate: Φ(x) ≈ (1-t)·Φ(xᵢ) + t·Φ(xᵢ₊₁)
+  4. Return: GELU(x) = x · Φ(x)
 
-#### C2: Piecewise Rational
+For x < -3.5: Use two-tier tail LUT (see Tail Handling section)
 ```
-Different Padé [2/2] per segment:
-- [0, 3]: positive coefficients
-- [-3, 0]: negative coefficients
-- blend zone at boundaries
-```
-Fewer segments than polynomial for equivalent accuracy. Mean ULP 1.15, Max ULP 881.
 
-#### D2: LUT Tails + B3-style Erf Center
-```
-x >= 3: Positive saturation (GELU(x) = x)
-x < -3.5: Extended tail LUT
-|x| <= 3.5: B3-style piecewise erf (Taylor + A-S rational)
-```
-Hybrid approach combining LUT tails with proven erf approximation. **Mean ULP 0.11, Max ULP 87.**
+**Why it works**: Linear interpolation error is O(h²·f'') where h is step size. For smooth Φ(x), this gives excellent accuracy with modest memory.
 
-#### D3: LUT + Polynomial Correction
-```
-32-entry coarse LUT as base
-Low-degree polynomial correction term
-Balances memory and computation
-```
-Mean ULP 1.82, Max ULP 830.
+**Result**: Mean ULP 0.07, Max ULP 87 (limited by tail LUT interpolation).
 
-#### D4: Non-uniform LUT Spacing
-```
-23 breakpoints with variable density
-Denser near x=0 and saturation boundaries
-Taylor approximation for |x| < 0.125
-Binary search for segment lookup
-```
-Optimized spacing with near-zero Taylor fix. **Mean ULP 0.60, Max ULP 88.**
+---
 
-#### F2: Numerical Quadrature
-```
-8-point Gauss-Legendre quadrature
-For x < -2: B3-style erf fallback
-For |x| <= 2: Taylor-based exp approximation
-```
-Hybrid quadrature with B3 erf fallback for negative region. **Mean ULP 0.11, Max ULP 87.**
+#### C1: Cubic Hermite Spline
 
-#### F3: Continued Fraction Erf
-```
-Taylor series for |z| < 0.5
-Lentz CF algorithm for |z| ≥ 0.5
-For x < -2: B3-style erf fallback
-```
-CF-based erf with B3 fallback for problematic negative region. **Mean ULP 0.12, Max ULP 87.**
+**Mathematical basis**: Piecewise cubic polynomials with continuous first derivatives.
 
-#### H1: Inverted GELU
 ```
-Newton-Raphson iteration
-4-6 iterations for convergence
-Finds x given y = GELU(x)
-```
-Useful for memory-efficient backpropagation.
+Hermite cubic on interval [xᵢ, xᵢ₊₁]:
+  H(t) = h₀₀(t)·yᵢ + h₁₀(t)·h·mᵢ + h₀₁(t)·yᵢ₊₁ + h₁₁(t)·h·mᵢ₊₁
 
-#### E3: Range-Scaled Approximation
+where t = (x - xᵢ)/h, h = xᵢ₊₁ - xᵢ, and:
+  h₀₀(t) = 2t³ - 3t² + 1      (value at left)
+  h₁₀(t) = t³ - 2t² + t       (slope at left)
+  h₀₁(t) = -2t³ + 3t²         (value at right)
+  h₁₁(t) = t³ - t²            (slope at right)
+
+Knots: {-4, -3, -2, -1, -0.5, 0, 0.5, 1, 2, 4}
+Values yᵢ = GELU(xᵢ), slopes mᵢ = GELU'(xᵢ)
 ```
-Scale factor s = 2 aligned with BF16 exponent
-Fit polynomial over x/s instead of x
-For x < 0: B3-style erf fallback
-For x >= 0: Range-scaled polynomial
+
+**Monotonicity preservation** (Fritsch-Carlson):
 ```
-Reduces catastrophic cancellation in subtraction-heavy formulas. Mean ULP 1.72, Max ULP 1130.
+For monotone data, derivatives must satisfy:
+  α² + β² ≤ 9  where α = m₀/δ, β = m₁/δ, δ = (y₁-y₀)/h
+
+If violated, clamp: τ = 3/√(α² + β²), m₀ ← τ·α·δ, m₁ ← τ·β·δ
+```
+
+**Near-zero refinement**: For |x| < 0.125, use Taylor:
+```
+GELU(x) ≈ x · (0.5 + x/√(2π)) = 0.5x + 0.3989x²
+```
+
+**Result**: Mean ULP 0.10, Max ULP 87.
+
+---
+
+#### R4: Tanh-Form GELU with Rational Tanh
+
+**Mathematical basis**: Hendrycks & Gimpel's tanh approximation of GELU.
+
+```
+GELU(x) ≈ 0.5x · (1 + tanh(√(2/π) · (x + 0.044715x³)))
+
+Let z = √(2/π) · (x + 0.044715x³) ≈ 0.7978x + 0.0356x³
+
+Approximate tanh(z) via [3,3] Padé:
+  tanh(z) ≈ z · (a₀ + a₁z² + a₂z⁴ + a₃z⁶) / (b₀ + b₁z² + b₂z⁴ + b₃z⁶)
+
+Coefficients derived from tanh Taylor: tanh(z) = z - z³/3 + 2z⁵/15 - ...
+```
+
+**Why the cubic term**: The 0.044715x³ correction improves accuracy near x = ±1 where the tanh form otherwise deviates from true GELU.
+
+**Result**: Mean ULP 0.11, Max ULP 166 (error peaks at x ≈ -3.5 boundary).
+
+---
+
+#### B1/B1v2: Sigmoid-Based GELU
+
+**Mathematical basis**: GELU resembles x·σ(kx) for appropriate k and sigmoid σ.
+
+```
+Observation: Φ(x) ≈ σ(1.702x) where σ is the logistic sigmoid
+
+B1 (simple rational sigmoid):
+  σ(z) ≈ 0.5 + z / (2(1 + |z|))
+  GELU(x) ≈ x · σ(1.702x)
+
+B1v2 (quadratic sigmoid):
+  σ(z) ≈ 0.5 + 0.5z / √(1 + z²)
+  GELU(x) ≈ x · σ(1.702x)
+```
+
+**Derivation of k=1.702**: Minimize ∫|Φ(x) - σ(kx)|² dx over typical range.
+
+**Why B1v2 is better**: The √(1+z²) form has the correct asymptotic behavior σ(z) → 1 as z → ∞, while the simple rational saturates more slowly.
+
+**Result**: B1 Mean 1.64, Max 1068; B1v2 Mean 1.47, Max 625.
+
+---
+
+#### A3: Chebyshev Polynomial Approximation
+
+**Mathematical basis**: Chebyshev polynomials minimize maximum error (near-minimax).
+
+```
+Map x ∈ [-4, 4] to u ∈ [-1, 1]: u = x/4
+
+Chebyshev expansion of Φ(4u):
+  Φ(4u) ≈ Σₙ cₙ · Tₙ(u)
+
+where Tₙ are Chebyshev polynomials: T₀=1, T₁=u, Tₙ₊₁ = 2u·Tₙ - Tₙ₋₁
+
+Clenshaw recurrence for stable evaluation:
+  bₙ₊₁ = bₙ₊₂ = 0
+  bₖ = cₖ + 2u·bₖ₊₁ - bₖ₊₂  (for k = n, n-1, ..., 0)
+  result = b₀ - u·b₁
+```
+
+**Why Chebyshev**: The equioscillation theorem guarantees Chebyshev expansion is within factor 2 of the true minimax polynomial. Error oscillates uniformly rather than growing at boundaries.
+
+**Result**: Mean ULP 2.54, Max ULP 1207.
+
+---
+
+#### A4/F3: Continued Fraction Methods
+
+**Mathematical basis**: Continued fractions often converge faster than power series.
+
+```
+A4 - Direct CF for Φ(x):
+  Φ(x) ≈ 0.5 + x · a₀/(1 + x²·a₁/(1 + x²·a₂/(1 + ...)))
+
+F3 - CF for erf(z) (Lentz algorithm):
+  erf(z) = (2z/√π) · 1/(1 + z²·1/(3 + z²·2/(5 + z²·3/(7 + ...))))
+
+  Convergents computed iteratively:
+    fₙ = fₙ₋₁ · Dₙ · Cₙ
+  where Cₙ, Dₙ are correction factors from partial numerators/denominators
+```
+
+**Convergence**: CF converges in the cut plane, complementing power series which converge in disks. For erf, CF is effective for |z| > 0.5.
+
+**Result**: A4 Mean 1.71, Max 1206; F3 Mean 0.12, Max 87.
+
+---
+
+#### R2: Rational Padé Approximation
+
+**Mathematical basis**: Padé approximants match more Taylor terms than polynomials of same degree.
+
+```
+Approximate (Φ(x) - 0.5)/x as rational function in x²:
+
+  (Φ(x) - 0.5)/x ≈ P(x²)/Q(x²)
+
+where P(u) = p₀ + p₁u + p₂u² + p₃u³
+      Q(u) = 1 + q₁u + q₂u² + q₃u³
+
+Coefficients from matching Taylor: Φ(x) = 0.5 + x/√(2π) - x³/(6√(2π)) + ...
+```
+
+**Why rational**: Near x=0, both polynomial and rational match Taylor. As |x| → ∞, rational P/Q → p₃/q₃ (constant), better matching Φ → 0 or 1 than polynomial which diverges.
+
+**Result**: Mean ULP 1.19, Max ULP 1139.
+
+---
+
+#### D4: Non-uniform LUT with Variable Spacing
+
+**Mathematical basis**: Concentrate breakpoints where function curvature is highest.
+
+```
+Breakpoints: {-4, -3, -2.5, -2, -1.5, -1, -0.75, -0.5, -0.25, 0,
+              0.25, 0.5, 0.75, 1, 1.5, 2, 2.5, 3, 3.5, 4, 5, 6, 8}
+
+Spacing rationale:
+  • Dense near x=0: GELU'' is large, linear interpolation error ∝ h²·f''
+  • Dense near x=-1: GELU has inflection point
+  • Sparse for |x|>3: GELU is nearly linear (saturating)
+
+Near-zero fix: For |x| < 0.125, use Taylor instead of LUT
+  GELU(x) ≈ 0.5x + 0.3989x²
+```
+
+**Result**: Mean ULP 0.60, Max ULP 88.
+
+---
+
+#### F2: Gaussian Quadrature
+
+**Mathematical basis**: Numerically integrate the GELU definition.
+
+```
+GELU(x) = x · Φ(x) = x · ∫_{-∞}^{x} φ(t) dt
+
+Transform to finite interval [0,1] via t = x - s/(1-s):
+  Φ(x) = ∫₀¹ φ(x - s/(1-s)) · 1/(1-s)² ds
+
+Apply 8-point Gauss-Legendre quadrature:
+  Φ(x) ≈ Σᵢ wᵢ · φ(x - sᵢ/(1-sᵢ)) · 1/(1-sᵢ)²
+
+where (sᵢ, wᵢ) are Gauss-Legendre nodes and weights on [0,1]
+```
+
+**Limitation**: Requires exp(-t²/2) evaluation. Uses B3-style erf fallback for x < -2 where exp approximation fails.
+
+**Result**: Mean ULP 0.11, Max ULP 87.
+
+---
 
 #### H2: GELU-Softmax Combined Unit
+
+**Mathematical basis**: Share exp() approximation between GELU and softmax.
+
 ```
-8-segment PWL for exp(x) on [-4, 4]
-tanh(z) = (exp(2z) - 1) / (exp(2z) + 1)
-Shared PWL exp with softmax computation
-For x < -2: B3-style erf fallback
+Both GELU (via tanh) and softmax need exp():
+  tanh(z) = (e^{2z} - 1)/(e^{2z} + 1)
+  softmax(xᵢ) = e^{xᵢ} / Σⱼ e^{xⱼ}
+
+PWL exp approximation (8 segments on [-4, 4]):
+  exp(x) ≈ mᵢ·x + bᵢ  for x ∈ [xᵢ, xᵢ₊₁]
+
+Hardware benefit: Same multiply-add units compute both activations
 ```
-Enables hardware sharing between GELU and softmax units. Mean ULP 1.31, Max ULP 1130.
+
+**Result**: Mean ULP 1.31, Max ULP 1130.
+
+---
+
+#### H1: Inverted GELU (Newton-Raphson)
+
+**Mathematical basis**: Given y, find x such that GELU(x) = y.
+
+```
+Newton-Raphson iteration:
+  xₙ₊₁ = xₙ - (GELU(xₙ) - y) / GELU'(xₙ)
+
+where GELU'(x) = Φ(x) + x·φ(x)
+
+Initial guess:
+  x₀ = y           if y ≥ 0
+  x₀ = y - 0.5     if y < 0  (accounts for GELU minimum)
+
+Convergence: 4-6 iterations for bf16 precision
+```
+
+**Application**: Memory-efficient backpropagation - store y = GELU(x) instead of x, recover x when needed.
+
+---
+
+#### R1: Saturation + Polynomial Core
+
+**Mathematical basis**: Use identity/zero for saturated regions, polynomial for core.
+
+```
+Saturation thresholds:
+  x ≥ 3:   GELU(x) = x        (Φ(3) ≈ 0.99865, close enough to 1)
+  x ≤ -9:  GELU(x) = 0        (Φ(-9) ≈ 10⁻²⁰, effectively 0)
+
+Core region (-9 < x < 3):
+  Φ(x) ≈ 0.5 + x·(a₁ + a₃x² + a₅x⁴ + a₇x⁶ + a₉x⁸)
+
+Odd polynomial form exploits Φ(x) - 0.5 being an odd function.
+Coefficients fitted via minimax optimization over [-4, 4].
+```
+
+**Result**: Mean ULP 1.40, Max ULP 1312.
+
+---
+
+#### R3: Piecewise Linear (PWL)
+
+**Mathematical basis**: Simplest approximation - connect points with straight lines.
+
+```
+Breakpoints at power-of-2 values: {-4, -2, -1, -0.5, 0, 0.5, 1, 2, 4}
+
+For each segment [xᵢ, xᵢ₊₁]:
+  GELU(x) ≈ GELU(xᵢ) + slope · (x - xᵢ)
+  where slope = (GELU(xᵢ₊₁) - GELU(xᵢ)) / (xᵢ₊₁ - xᵢ)
+
+Power-of-2 breakpoints enable efficient segment lookup via exponent bits.
+```
+
+**Trade-off**: Very fast (1 multiply + 1 add per segment) but inherently limited accuracy since GELU is curved.
+
+**Result**: Mean ULP 36.82, Max ULP 832.
+
+---
+
+#### B3: Erf Polynomial (with Tail LUT)
+
+**Mathematical basis**: Same as B3 Pure but uses LUT for tail instead of asymptotic.
+
+```
+Core: Piecewise erf approximation (Taylor + A-S rational)
+Tail: For x < -3.5, use precomputed tail LUT with linear interpolation
+```
+
+**Difference from B3 Pure**: Relies on LUT for deep tail, limiting Max ULP to 87 (interpolation error) vs 33 (asymptotic).
+
+**Result**: Mean ULP 0.11, Max ULP 87.
+
+---
+
+#### B4: Rational Erf with Range Reduction
+
+**Mathematical basis**: Different rational approximations for different |z| ranges.
+
+```
+For z = x/√2:
+
+If |z| < 1:
+  erf(z) ≈ z · (p₀ + p₁z² + p₂z⁴) / (1 + q₁z² + q₂z⁴)
+
+If |z| ≥ 1:
+  erf(z) ≈ sign(z) · (1 - R(|z|) · exp(-z²))
+  where R(z) is Abramowitz-Stegun rational
+```
+
+**Why range reduction**: Near z=0, erf is smooth and polynomial-like. For |z| > 1, erf approaches ±1 exponentially, needing different form.
+
+**Result**: Mean ULP 0.56, Max ULP 535.
+
+---
+
+#### C2: Piecewise Rational
+
+**Mathematical basis**: Different Padé approximants per region.
+
+```
+Segments: [-3.5, -1.5], [-1.5, 0], [0, 1.5], [1.5, 3.5]
+
+Each segment uses [2/2] Padé:
+  Φ(x) ≈ (p₀ + p₁x + p₂x²) / (1 + q₁x + q₂x²)
+
+Coefficients fitted separately per segment for local accuracy.
+Boundary continuity enforced by matching function values at knots.
+```
+
+**Advantage over polynomial**: Rational forms better capture asymptotic behavior (Φ → 0 or 1) than polynomials which diverge.
+
+**Result**: Mean ULP 1.15, Max ULP 881.
+
+---
+
+#### D2: LUT Tails + B3-style Erf Center
+
+**Mathematical basis**: Hybrid - LUT where needed, arithmetic where effective.
+
+```
+Region handling:
+  x ≥ 3:      Return x (positive saturation)
+  x < -3.5:   Use tail LUT with linear interpolation
+  |x| ≤ 3.5:  Use B3-style piecewise erf (Taylor + A-S rational)
+```
+
+**Rationale**: The B3 erf approximation is accurate in core but fails in deep tail. LUT is accurate but memory-expensive. Combine strengths of both.
+
+**Result**: Mean ULP 0.11, Max ULP 87.
+
+---
+
+#### D3: LUT + Polynomial Correction
+
+**Mathematical basis**: Coarse LUT with polynomial refinement.
+
+```
+32-entry LUT at 0.25 step from -4 to +4
+
+For input x in [xᵢ, xᵢ₊₁]:
+  base = lerp(LUT[i], LUT[i+1], t)     // Linear interpolation
+  correction = c₁·δ + c₂·δ²            // Polynomial correction
+  result = base + correction
+
+where δ = x - (xᵢ + xᵢ₊₁)/2 (distance from segment center)
+```
+
+**Trade-off**: Less memory than fine LUT, more computation than pure LUT.
+
+**Result**: Mean ULP 1.82, Max ULP 830.
+
+---
+
+#### E3: Range-Scaled Approximation
+
+**Mathematical basis**: Scale input to reduce coefficient magnitude.
+
+```
+Scale factor s = 2 (aligned with bf16 exponent boundaries)
+
+Compute GELU(x) as:
+  For x ≥ 0: Use polynomial in (x/s)
+  For x < 0: Use B3-style erf fallback
+
+Polynomial: Φ(x) ≈ 0.5 + (x/s)·P((x/s)²) where P has smaller coefficients
+```
+
+**Purpose**: When coefficients span many orders of magnitude, bf16 quantization loses precision. Scaling reduces dynamic range.
+
+**Result**: Mean ULP 1.72, Max ULP 1130.
+
+---
 
 #### H3: SoftEx Tanh
+
+**Mathematical basis**: Approximate exp() to enable tanh-form GELU.
+
 ```
-Padé [2/2] approximation for exp(x)
-tanh(z) = (exp(2z) - 1) / (exp(2z) + 1)
-Arithmetic-only exp replacement
+Padé [2/2] approximation for exp(x):
+  exp(x) ≈ (1 + x/2 + x²/12) / (1 - x/2 + x²/12)
+
+Then compute tanh via:
+  tanh(z) = (exp(2z) - 1) / (exp(2z) + 1)
+
+And GELU via Hendrycks form:
+  GELU(x) ≈ 0.5x · (1 + tanh(0.7978·(x + 0.0356x³)))
 ```
-Enables tanh-based GELU without true exp(). Mean ULP 1.26, Max ULP 1247.
+
+**Limitation**: Padé exp is accurate for |x| < 2 but diverges beyond. Uses fallback for |x| > 2.
+
+**Result**: Mean ULP 1.26, Max ULP 1247.
+
+---
 
 ### Tenstorrent Hardware Reference Benchmarks
 
