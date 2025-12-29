@@ -258,21 +258,21 @@ x ≥ 3:  GELU(x) = x
 x ≤ -9: GELU(x) = 0
 else:   Φ(x) ≈ 0.5 + x·(a₁ + a₃x² + a₅x⁴ + a₇x⁶ + a₉x⁸)
 ```
-9th-degree minimax polynomial with asymmetric saturation. Mean ULP 1.43, Max ULP 1312.
+9th-degree minimax polynomial with asymmetric saturation. Mean ULP 1.40, Max ULP 1312.
 
 #### R2: Rational Padé Approximation
 ```
 Φ(x) ≈ 0.5 + x · P(x²) / Q(x²)
 P, Q are [3/3] polynomials in x²
 ```
-Better tail convergence than pure polynomials. Mean ULP 1.22, Max ULP 1139.
+Better tail convergence than pure polynomials. Mean ULP 1.19, Max ULP 1139.
 
 #### R3: Piecewise Linear (PWL)
 ```
 Power-of-2 breakpoints: 0, ±0.5, ±1, ±2, ±4
 Linear interpolation between segments
 ```
-Fast evaluation but higher near-zero error. Mean ULP 36.85, Max ULP 832.
+Fast evaluation but higher near-zero error. Mean ULP 36.82, Max ULP 832.
 
 #### R4: Tanh-Form + Rational Tanh
 ```
@@ -295,14 +295,14 @@ Chebyshev expansion on [-4, 4] mapped to [-1, 1]
 Clenshaw recurrence for stable evaluation
 Degree-9 with odd coefficients
 ```
-Near-minimax with bounded oscillating error. Mean ULP 2.57, Max ULP 1207.
+Near-minimax with bounded oscillating error. Mean ULP 2.54, Max ULP 1207.
 
 #### A4: Continued Fraction
 ```
 GELU(x) ≈ x · (a₀ + x²/(b₁ + x²/(b₂ + ...)))
 Depth-4 truncation
 ```
-Alternative to Padé with different convergence. Mean ULP 1.73, Max ULP 1206.
+Alternative to Padé with different convergence. Mean ULP 1.71, Max ULP 1206.
 
 #### B4: Rational Erf with Range Reduction
 ```
@@ -310,7 +310,7 @@ Alternative to Padé with different convergence. Mean ULP 1.73, Max ULP 1206.
 |z| ≥ 1: Abramowitz-Stegun with exp factor
 Separate fits per range
 ```
-Reduces polynomial degree requirements. Mean ULP 0.59, Max ULP 535.
+Reduces polynomial degree requirements. Mean ULP 0.56, Max ULP 535.
 
 #### C2: Piecewise Rational
 ```
@@ -319,7 +319,7 @@ Different Padé [2/2] per segment:
 - [-3, 0]: negative coefficients
 - blend zone at boundaries
 ```
-Fewer segments than polynomial for equivalent accuracy. Mean ULP 1.18, Max ULP 881.
+Fewer segments than polynomial for equivalent accuracy. Mean ULP 1.15, Max ULP 881.
 
 #### D2: LUT Tails + B3-style Erf Center
 ```
@@ -335,7 +335,7 @@ Hybrid approach combining LUT tails with proven erf approximation. **Mean ULP 0.
 Low-degree polynomial correction term
 Balances memory and computation
 ```
-Mean ULP 1.84, Max ULP 830.
+Mean ULP 1.82, Max ULP 830.
 
 #### D4: Non-uniform LUT Spacing
 ```
@@ -377,7 +377,7 @@ Fit polynomial over x/s instead of x
 For x < 0: B3-style erf fallback
 For x >= 0: Range-scaled polynomial
 ```
-Reduces catastrophic cancellation in subtraction-heavy formulas. Mean ULP 1.75, Max ULP 1130.
+Reduces catastrophic cancellation in subtraction-heavy formulas. Mean ULP 1.72, Max ULP 1130.
 
 #### H2: GELU-Softmax Combined Unit
 ```
@@ -386,7 +386,7 @@ tanh(z) = (exp(2z) - 1) / (exp(2z) + 1)
 Shared PWL exp with softmax computation
 For x < -2: B3-style erf fallback
 ```
-Enables hardware sharing between GELU and softmax units. Mean ULP 1.33, Max ULP 1130.
+Enables hardware sharing between GELU and softmax units. Mean ULP 1.31, Max ULP 1130.
 
 #### H3: SoftEx Tanh
 ```
@@ -394,7 +394,7 @@ Padé [2/2] approximation for exp(x)
 tanh(z) = (exp(2z) - 1) / (exp(2z) + 1)
 Arithmetic-only exp replacement
 ```
-Enables tanh-based GELU without true exp(). Mean ULP 1.28, Max ULP 1247.
+Enables tanh-based GELU without true exp(). Mean ULP 1.26, Max ULP 1247.
 
 ### Tail Handling
 
