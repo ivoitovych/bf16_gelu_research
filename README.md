@@ -184,6 +184,9 @@ All 26 methods produce byte-for-byte identical ULP analysis output on both platf
 # H2: GELU-Softmax combined unit analysis
 ./gelu_analysis --softmax-unit
 
+# ULP measurement sanity check (verify framework correctness)
+./gelu_analysis --sanity
+
 # Run all analysis modes
 ./gelu_analysis --all
 ```
