@@ -250,6 +250,8 @@ All implementations avoid standard library transcendental function calls:
 
 **Arithmetic-Only Policy Clarification**: The "Pure" methods use `fast_exp_neg()` for the asymptotic tail, which computes `exp(-u)` via IEEE754 bit manipulation and polynomial refinement—not via `std::exp()`. This technique maps efficiently to hardware multipliers and integer ALUs, avoiding expensive SFPU transcendental operations. See: Schraudolph, N.N. (1999) "A Fast, Compact Approximation of the Exponential Function" Neural Computation 11(4), 853-862.
 
+> **Note**: Throughout this document, mathematical formulas showing `exp()` or `φ(x) = exp(-x²/2)/√(2π)` refer to the **bit-manipulation approximation**, not library calls. The implementation uses `exp(-u) ≈ 2^(-u/ln2)` computed via IEEE754 exponent manipulation.
+
 ### Mathematical Foundation
 
 The GELU function and its key properties:
