@@ -3898,7 +3898,7 @@ void analyze_epss_refinement(const UlpCalculator& ulp_calc) {
     std::cout << "\nEPSS Recommendation:" << std::endl;
     std::cout << "- Error peaks cluster near segment boundaries" << std::endl;
     std::cout << "- Consider adding breakpoints at x ≈ -3.5, -1.5, 1.5, 3.0" << std::endl;
-    std::cout << "- Current C1 spline uses 9 segments and achieves 145 max ULP" << std::endl;
+    std::cout << "- Current C1 spline uses 9 segments and achieves 87 max ULP" << std::endl;
     std::cout << "- EPSS refinement has diminishing returns beyond 8-10 segments" << std::endl;
 }
 
@@ -4629,7 +4629,7 @@ int main(int argc, char* argv[]) {
             {"B3 Pure: Erf (no LUT)", gelu_b3_pure},
             {"B4: Rational Erf (range red)", gelu_b4_rational_erf},
             // Category C: Piecewise methods
-            {"C1: Cubic Spline (8 seg)", gelu_c1_cubic_spline},
+            {"C1: Cubic Spline (9 seg)", gelu_c1_cubic_spline},
             {"C1 Pure: Spline + Asymptotic", gelu_c1_pure},
             {"C2: Piecewise Rational", gelu_c2_piecewise_rational},
             // Category R: Recommended baselines
