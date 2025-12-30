@@ -8,9 +8,9 @@ This project implements and evaluates multiple GELU approximation strategies opt
 
 ### Key Achievements
 
-**16 methods achieve Max ULP ≤ 88** with 6 Pure methods at Max ULP ≤ 35. **R5 Pure achieves Max ULP = 2** (best overall, Mean ULP = 0.002) after fixing subnormal handling in exp approximation. Deep tail accuracy achieved via asymptotic expansion `GELU(x) ≈ -φ(x)·(1 - 1/x² + 3/x⁴ - 15/x⁶)` and erfc-based reference to avoid catastrophic cancellation.
+**17 methods achieve Max ULP ≤ 88** with 7 Pure methods at Max ULP ≤ 35. **C6: Adaptive Polynomial achieves Max ULP = 1** (best overall, Mean ULP = 0.001) using 16 error-optimized segments with degree-4 polynomials, plus Taylor near-zero and asymptotic tail handling. R5 Pure achieves Max ULP = 2 (second best). Deep tail accuracy achieved via asymptotic expansion `GELU(x) ≈ -φ(x)·(1 - 1/x² + 3/x⁴ - 15/x⁶)` and erfc-based reference to avoid catastrophic cancellation.
 
-### Complete Results Table (All 38 Methods)
+### Complete Results Table (All 39 Methods)
 
 Sorted by Max ULP. Region definitions: **nz** = near_zero (|x| < 0.5), **cp** = core_pos (0.5 ≤ x < 3), **cn** = core_neg (-3 ≤ x < -0.5), **tn** = tail_neg (x < -3).
 
@@ -18,6 +18,7 @@ Sorted by Max ULP. Region definitions: **nz** = near_zero (|x| < 0.5), **cp** = 
 
 | Method | *Mean* | Max | *nz Mean* | nz Max | *cp Mean* | cp Max | *cn Mean* | cn Max | *tn Mean* | tn Max |
 |--------|--------|-----|-----------|--------|-----------|--------|-----------|--------|-----------|--------|
+| **C6 Adaptive** | ***0.001*** | **1** | *0.00* | 1 | *0.04* | 1 | *0.02* | 1 | *0.00* | 1 |
 | **R5 Pure** | ***0.002*** | **2** | *0.00* | 1 | *0.00* | 0 | *0.03* | 1 | *0.00* | 2 |
 | **B3 Pure** | ***0.01*** | **23** | *0.00* | 0 | *0.04* | 1 | *2.03* | 23 | *0.00* | 2 |
 | **D2 Pure** | ***0.01*** | **23** | *0.00* | 0 | *0.04* | 1 | *2.03* | 23 | *0.00* | 2 |
@@ -63,12 +64,12 @@ Sorted by Max ULP. Region definitions: **nz** = near_zero (|x| < 0.5), **cp** = 
 
 1. **tail_pos is trivial**: All methods achieve 0 ULP (exact saturation at x ≥ 2.78125, implementations use x ≥ 3)
 2. **core_neg is the bottleneck**: Most high-ULP methods fail at x ≈ -3.5 (TAIL_START boundary)
-3. **Six Pure methods achieve Max ULP ≤ 35**: R5 Pure (**2**, Mean 0.002), B3 Pure (23, Mean 0.01), D2 Pure (23, Mean 0.01), F3 Pure (28, Mean 0.02), R4 Pure (29, Mean 0.01), C1 Pure (35, Mean 0.03)
+3. **Seven Pure methods achieve Max ULP ≤ 35**: C6 Adaptive (**1**, Mean 0.001), R5 Pure (**2**, Mean 0.002), B3 Pure (23, Mean 0.01), D2 Pure (23, Mean 0.01), F3 Pure (28, Mean 0.02), R4 Pure (29, Mean 0.01), C1 Pure (35, Mean 0.03)
 4. **Pure methods eliminate shared tail dependency**: All Pure methods use independent asymptotic expansion for deep tail, achieving Max ULP = 2-35 vs 87 for shared-tail versions
 5. **LUT-based methods plateau at 87**: Shared tail LUT limited by interpolation error at x ≈ -7.65; Pure versions avoid this via asymptotic tail
 6. **E4 Hermite blending achieves Max ULP 58**: Smooth transition between polynomial core and asymptotic tail reduces discontinuity error
 
-38 methods implemented: 36 research methods (23 original + 9 Pure variants + 4 engineering variants) across 8 categories from FinalLists.md taxonomy, plus 2 Tenstorrent hardware reference benchmarks.
+39 methods implemented: 37 research methods (23 original + 9 Pure variants + 5 engineering variants including C6 Adaptive) across 8 categories from FinalLists.md taxonomy, plus 2 Tenstorrent hardware reference benchmarks.
 
 ## Background
 
@@ -140,7 +141,7 @@ Results are **identical** across different GCC versions and platforms:
 | WSL (Ubuntu 24.04) | GCC 13.3.0 | ✓ Verified |
 | MinGW-w64 (MSYS2 UCRT64) | GCC 15.2.0 | ✓ Verified |
 
-All 38 methods produce byte-for-byte identical ULP analysis output on both platforms (after normalizing line endings). This confirms:
+All 39 methods produce byte-for-byte identical ULP analysis output on both platforms (after normalizing line endings). This confirms:
 - No compiler-specific floating-point behavior differences
 - Consistent `std::bfloat16_t` implementation across GCC versions
 - Deterministic results for reproducible research
@@ -152,7 +153,7 @@ All 38 methods produce byte-for-byte identical ULP analysis output on both platf
 ### Running Analysis
 
 ```bash
-# Full ULP analysis over entire bfloat16 range (38 methods)
+# Full ULP analysis over entire bfloat16 range (39 methods)
 ./gelu_analysis --analyze
 
 # Diagnostic mode with specific test points
@@ -217,24 +218,24 @@ All 38 methods produce byte-for-byte identical ULP analysis output on both platf
 Building ULP lookup table...
 Done! Valid bfloat16 values: 65280
 
---- B3 Pure: Erf (no LUT) ---
+--- C6: Adaptive Polynomial ---
 Samples:    65280
-Max ULP:    33
-Mean ULP:   0.0119
+Max ULP:    1
+Mean ULP:   0.0012
 P50 ULP:    0
 P90 ULP:    0
 P99 ULP:    0
-Worst input: -13.2500 (0xc154)
+Worst input: 0.0371 (0x3d18)
 
   Region Analysis (G3):
   +---------------+-------+----------+-----------+
   | Region        | Count | Max ULP  | Mean ULP  |
   +---------------+-------+----------+-----------+
-  | near_zero     | 32256 |        0 |      0.00 |
+  | near_zero     | 32256 |        1 |      0.00 |
   | core_pos      |   320 |        1 |      0.04 |
-  | core_neg      |   321 |       23 |      2.03 |
+  | core_neg      |   321 |        1 |      0.02 |
   | tail_pos      | 16192 |        0 |      0.00 |
-  | tail_neg      | 16191 |       33 |      0.01 |
+  | tail_neg      | 16191 |        1 |      0.00 |
   +---------------+-------+----------+-----------+
 ```
 
@@ -278,7 +279,42 @@ The approximation challenge is computing `erf(z)` without transcendental functio
 
 ### Methods
 
-#### B3 Pure: Erf Approximation with Asymptotic Tail ⭐ Best Method
+#### C6: Adaptive Polynomial ⭐⭐ Best Method (Max ULP = 1)
+
+**Mathematical basis**: Error-driven piecewise polynomial with iterative boundary optimization.
+
+**Core region ([-3.5, 3])**:
+```
+16 segments with degree-4 polynomials, boundaries optimized for uniform error:
+
+For x in segment [x_start, x_end]:
+  u = (x - x_mid) / x_scale    // Map to normalized coordinate
+  Φ(x) ≈ c₀ + c₁u + c₂u² + c₃u³ + c₄u⁴
+
+Coefficients computed via least-squares fitting in float64,
+then iterative minimax refinement (Remez-like) to minimize max ULP.
+```
+
+**Near-zero (|x| < 0.125)**: Taylor expansion
+```
+GELU(x) ≈ x · (0.5 + x/√(2π)) = 0.5x + 0.3989x²
+```
+
+**Deep tail (x < -3.5)**: Asymptotic expansion
+```
+GELU(x) ≈ -φ(x) · (1 - 1/x² + 3/x⁴ - 15/x⁶)
+where φ(x) = exp(-x²/2) / √(2π)
+```
+
+**Why it works**: Traditional uniform-knot piecewise methods suffer from error concentration where GELU curvature varies. The adaptive approach iteratively adjusts segment boundaries based on per-segment max ULP error, achieving near-uniform error distribution. Combined with proper handling of near-zero (Taylor) and deep-tail (asymptotic) regions, this achieves Max ULP = 1 across the entire bf16 range.
+
+**Research tool**: Standalone `adaptive_poly.cpp` for experimenting with segment count, polynomial degree, and refinement iterations.
+
+**Result**: Mean ULP 0.001, Max ULP 1 (best overall). 80 coefficients (16 segments × 5 coefficients).
+
+---
+
+#### B3 Pure: Erf Approximation with Asymptotic Tail ⭐
 
 **Mathematical basis**: Approximate `erf(z)` piecewise, then use asymptotic expansion for deep tail.
 
@@ -312,7 +348,7 @@ where φ(x) = exp(-x²/2) / √(2π) is computed via:
 
 **Why it works**: This Poincaré-type asymptotic series provides rapidly decreasing term magnitudes for |x| > 3, with each successive term O(1/x²) smaller. Truncating at x⁻⁶ gives sufficient precision for bf16's 7-bit mantissa.
 
-**Result**: Mean ULP 0.01, Max ULP 33. No LUT required.
+**Result**: Mean ULP 0.01, Max ULP 23. No LUT required.
 
 ---
 
@@ -338,7 +374,7 @@ For x < -3.5: Use two-tier tail LUT (see Tail Handling section)
 
 ---
 
-#### R5 Pure: LUT + Asymptotic Tail ⭐ Best Mean ULP
+#### R5 Pure: LUT + Asymptotic Tail ⭐
 
 **Mathematical basis**: Same as R5 LUT but uses asymptotic expansion for deep tail instead of tail LUT.
 
@@ -354,7 +390,7 @@ Positive saturation (x ≥ 3): GELU(x) = x
 
 **Why it works**: The asymptotic series provides rapidly decreasing term magnitudes for |x| > 3, avoiding the interpolation error that limits R5 LUT to Max ULP 87. Combines the accuracy of LUT interpolation in the core region with the precision of analytical asymptotic expansion in the tail.
 
-**Result**: Mean ULP 0.003, Max ULP 33. Ties with B3 Pure for best Max ULP but has 3× better Mean ULP.
+**Result**: Mean ULP 0.002, Max ULP 2 (second best after C6).
 
 ---
 
@@ -512,7 +548,7 @@ where φ(x) = exp(-x²/2) / √(2π)
 
 **Why Pure**: The continued fraction approach is mathematically elegant and deserves independent implementation. F3 Pure eliminates reliance on B3-style erf fallback, maintaining pure CF methodology throughout.
 
-**Result**: Mean ULP 0.02, Max ULP 33 (improved from 87).
+**Result**: Mean ULP 0.02, Max ULP 28 (improved from 87).
 
 ---
 
@@ -749,7 +785,7 @@ where φ(x) = exp(-x²/2) / √(2π)
 
 **Why Pure**: The original D2 hybrid strategy (LUT for tail, erf for core) is sound, but shared tail LUT creates implementation dependency. D2 Pure maintains the hybrid philosophy while achieving complete methodological independence.
 
-**Result**: Mean ULP 0.01, Max ULP 33 (improved from 87).
+**Result**: Mean ULP 0.01, Max ULP 23 (improved from 87).
 
 ---
 
@@ -861,8 +897,8 @@ namespace tail_lut {
 ```
 Max ULP = 87 (limited by linear interpolation in exponential decay region).
 
-#### Asymptotic (B3 Pure - Best Method)
-For x < -8.3125, use the asymptotic expansion:
+#### Asymptotic (Pure Methods)
+For deep tail (x < -3.5 or x < -8.3125 depending on method), use the asymptotic expansion:
 
 ```cpp
 // GELU(x) ≈ -φ(x) * (1 - 1/x² + 3/x⁴ - 15/x⁶)
@@ -876,7 +912,7 @@ float gelu_asymptotic(float x) {
     return -phi_x * correction;
 }
 ```
-**Max ULP = 33** (best overall). No LUT required.
+Pure methods achieve Max ULP 2-35 using asymptotic tail. No LUT required for tail.
 
 Note: The asymptotic expansion covers x ∈ [-13.5625, -8.3125] where bf16 GELU values are tiny subnormals. At x ≤ -13.5625, bf16(GELU(x)) rounds to exactly 0.
 
@@ -885,6 +921,7 @@ Note: The asymptotic expansion covers x ∈ [-13.5625, -8.3125] where bf16 GELU 
 | File | Description |
 |------|-------------|
 | `gelu_implementations.cpp` | All GELU approximations + analysis framework |
+| `adaptive_poly.cpp` | Standalone adaptive polynomial research tool (C6) |
 | `ulp_calculator.cpp` | Standalone ULP calculator with lookup table |
 | `saturation_analysis.cpp` | Standalone bf16 saturation threshold finder |
 | `debug_tools.cpp` | Exploratory debugging tools for tail/exp analysis |
@@ -928,7 +965,7 @@ The codebase divides the input range into regions for detailed error analysis:
 
 ### Max ULP Analysis
 
-After implementing asymptotic expansion for the deep tail, **B3 Pure achieves Max ULP = 33** (best overall). LUT-based methods achieve Max ULP = 87.
+**C6: Adaptive Polynomial achieves Max ULP = 1** (best overall). After implementing asymptotic expansion for the deep tail, Pure methods achieve Max ULP ≤ 35. LUT-based methods achieve Max ULP = 87.
 
 **Error sources by region:**
 
@@ -936,9 +973,9 @@ After implementing asymptotic expansion for the deep tail, **B3 Pure achieves Ma
 |--------|-------------|-------|
 | near_zero | 0 (B3 Pure) | Taylor series is exact near zero |
 | core_pos | 0 (R5) | LUT interpolation is accurate |
-| core_neg | 1 (R5) | LUT interpolation is accurate |
+| core_neg | 1 (C6/R5) | Optimized piecewise + LUT interpolation |
 | tail_pos | 0 (all) | Saturation bf16-rounding exact |
-| tail_neg | 33 (B3 Pure) | Asymptotic expansion matches reference |
+| tail_neg | 1 (C6) | Adaptive polynomial + asymptotic expansion |
 
 **Remaining error sources:**
 1. **x ≈ -7.65** (LUT methods): Linear interpolation doesn't match exponential decay (87 ULP)
@@ -1016,7 +1053,7 @@ Based on FinalLists.md, the project follows a phased implementation approach:
 
 ### All Methods Fixed
 
-All methods now achieve Max ULP ≤ 1547 (A1 Poly-7). **The top 16 methods achieve Max ULP ≤ 88**, with six Pure methods tied at Max ULP = 33.
+All methods now achieve Max ULP ≤ 1547 (A1 Poly-7). **The top 17 methods achieve Max ULP ≤ 88**, with 7 Pure methods achieving Max ULP ≤ 35 (C6 at 1, R5 Pure at 2, B3/D2 Pure at 23, F3 Pure at 28, R4 Pure at 29, C1 Pure at 35).
 
 **Key fixes applied:**
 - **Reference function**: Use `erfc(-z)` for negative x to avoid catastrophic cancellation in `1 + erf(z)`
@@ -1041,7 +1078,7 @@ All methods now achieve Max ULP ≤ 1547 (A1 Poly-7). **The top 16 methods achie
 
 7. **Entire range testing**: Methods optimized for [-8, 8] may fail catastrophically outside this range.
 
-8. **Sixteen methods achieve Max ULP ≤ 88**: R5 Pure/B3 Pure/D2 Pure/F3 Pure/R4 Pure (33), C1 Pure (35), E4 Hermite (58), E4v3 (61), E4v2 (81), R5/C1/B3/D2/F2/F3 (87), D4 (88).
+8. **Seventeen methods achieve Max ULP ≤ 88**: C6 (1), R5 Pure (2), B3 Pure/D2 Pure (23), F3 Pure (28), R4 Pure (29), C1 Pure (35), E4 Hermite (58), E4v3 (61), E4v2 (81), R5/C1/B3/D2/F2/F3 (87), D4 (88).
 
 9. **B3 erf is the universal fallback**: When arithmetic-only exp() fails (|x| > 2), the B3 piecewise erf (Taylor + exp-free rational) provides reliable fallback.
 
