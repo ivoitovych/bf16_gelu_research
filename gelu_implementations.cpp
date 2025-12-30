@@ -269,10 +269,14 @@ namespace tail_lut {
  * 2^x = 2^n * 2^f
  * - 2^n computed via IEEE754 exponent manipulation
  * - 2^f approximated with minimax polynomial
+ *
+ * Now handles subnormal range (x down to -149) for deep negative tail accuracy.
+ * This is needed because bf16 GELU values are tiny subnormals for x near -13.
  */
 inline float fast_exp2_neg(float x) {
-    // For very negative x, underflow to zero
-    if (x < -126.0f) return 0.0f;
+    // For very negative x beyond float subnormal range, underflow to zero
+    // Float subnormals go down to 2^(-149), so we cut off there
+    if (x < -149.0f) return 0.0f;
 
     // Split into integer and fractional parts
     float n = std::floor(x);
@@ -287,14 +291,40 @@ inline float fast_exp2_neg(float x) {
                     + 0.0555041f * f3 + 0.0096139f * f4;
 
     // Compute 2^n via IEEE754 exponent manipulation
-    int32_t exp_bits = static_cast<int32_t>(n) + 127;
-    if (exp_bits <= 0) return 0.0f;  // Underflow
+    int32_t exp_int = static_cast<int32_t>(n);
+    int32_t exp_bits = exp_int + 127;
 
-    uint32_t bits = static_cast<uint32_t>(exp_bits) << 23;
-    float pow2_int;
-    std::memcpy(&pow2_int, &bits, sizeof(float));
+    if (exp_bits > 0) {
+        // Normal range: exponent >= 1
+        uint32_t bits = static_cast<uint32_t>(exp_bits) << 23;
+        float pow2_int;
+        std::memcpy(&pow2_int, &bits, sizeof(float));
+        return pow2_int * pow2_frac;
+    } else {
+        // Subnormal range: exponent <= 0
+        // 2^x = 2^(-126) * 2^(x+126) for subnormals
+        // We need to scale down by 2^(-exp_bits) = 2^(127-exp_int-127) = 2^(-exp_int)
+        // Since exp_bits <= 0, -exp_bits >= 0, so we divide by 2^(-exp_bits)
+        //
+        // Compute 2^(-126) first (smallest normal)
+        uint32_t min_normal_bits = 1u << 23;  // 2^(-126)
+        float min_normal;
+        std::memcpy(&min_normal, &min_normal_bits, sizeof(float));
 
-    return pow2_int * pow2_frac;
+        // Now we need 2^(x+126) = 2^(n+126) * 2^f
+        // Since n < -126, n+126 < 0, so 2^(n+126) is a fraction
+        // We can compute this as: result = min_normal * pow2_frac * 2^(n+126)
+        // where 2^(n+126) = 2^(exp_bits - 1) since exp_bits = n + 127
+        int32_t subnorm_shift = 1 - exp_bits;  // How many bits to shift right
+        if (subnorm_shift >= 24) return 0.0f;  // Would shift out all mantissa bits
+
+        // Scale factor: 2^(exp_bits - 1) = 2^(-(subnorm_shift))
+        float scale = min_normal;
+        for (int i = 0; i < subnorm_shift; ++i) {
+            scale *= 0.5f;
+        }
+        return scale * pow2_frac;
+    }
 }
 
 /**
