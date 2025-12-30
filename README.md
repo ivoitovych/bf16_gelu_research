@@ -8,9 +8,9 @@ This project implements and evaluates multiple GELU approximation strategies opt
 
 ### Key Achievements
 
-**12 methods achieve Max ULP ≤ 88** with 5 Pure methods at Max ULP ≤ 35. R5 Pure achieves best overall performance (Max ULP = 33, Mean ULP = 0.003). Deep tail accuracy achieved via asymptotic expansion `GELU(x) ≈ -φ(x)·(1 - 1/x² + 3/x⁴ - 15/x⁶)` and erfc-based reference to avoid catastrophic cancellation.
+**14 methods achieve Max ULP ≤ 88** with 6 Pure methods at Max ULP ≤ 35. R5 Pure achieves best overall performance (Max ULP = 33, Mean ULP = 0.003). Deep tail accuracy achieved via asymptotic expansion `GELU(x) ≈ -φ(x)·(1 - 1/x² + 3/x⁴ - 15/x⁶)` and erfc-based reference to avoid catastrophic cancellation.
 
-### Complete Results Table (All 30 Methods)
+### Complete Results Table (All 34 Methods)
 
 Sorted by Max ULP. Region definitions: **nz** = near_zero (|x| < 0.5), **cp** = core_pos (0.5 ≤ x < 3), **cn** = core_neg (-3 ≤ x < -0.5), **tn** = tail_neg (x < -3).
 
@@ -23,6 +23,8 @@ Sorted by Max ULP. Region definitions: **nz** = near_zero (|x| < 0.5), **cp** = 
 | **D2 Pure** | ***0.01*** | **33** | *0.00* | 0 | *0.04* | 1 | *2.03* | 23 | *0.01* | 33 |
 | **F3 Pure** | ***0.02*** | **33** | *0.00* | 0 | *0.40* | 3 | *3.90* | 23 | *0.02* | 33 |
 | **C1 Pure** | ***0.03*** | **35** | *0.00* | 1 | *0.07* | 1 | *4.09* | 12 | *0.03* | 35 |
+| **R4 Pure** | ***0.01*** | **33** | *0.00* | 1 | *0.03* | 1 | *1.75* | 29 | *0.01* | 33 |
+| E4 Hermite | *0.05* | 58 | *0.00* | 0 | *0.04* | 1 | *2.03* | 23 | *0.14* | 58 |
 | R5 LUT | *0.07* | 87 | *0.00* | 1 | *0.00* | 0 | *0.03* | 1 | *0.29* | 87 |
 | B3 Erf Poly | *0.11* | 87 | *0.00* | 0 | *0.04* | 1 | *2.03* | 23 | *0.40* | 87 |
 | C1 Spline | *0.10* | 87 | *0.00* | 1 | *0.07* | 1 | *4.09* | 12 | *0.31* | 87 |
@@ -42,6 +44,8 @@ Sorted by Max ULP. Region definitions: **nz** = near_zero (|x| < 0.5), **cp** = 
 | R2 Rational | *1.19* | 1139 | *0.00* | 1 | *5.02* | 17 | *126.52* | 775 | *2.18* | 1139 |
 | A4 Cont.Frac | *1.71* | 1206 | *0.02* | 7 | *18.07* | 36 | *208.65* | 866 | *2.34* | 1206 |
 | A3 Chebyshev | *2.54* | 1207 | *0.57* | 62 | *47.73* | 65 | *292.26* | 900 | *2.37* | 1207 |
+| A1 Pure | *2.83* | 1211 | *0.88* | 122 | *10.87* | 29 | *475.34* | 1211 | *0.01* | 33 |
+| E9 Remez BF16 | *2.83* | 1211 | *0.88* | 122 | *10.80* | 28 | *476.64* | 1211 | *0.01* | 33 |
 | H3 SoftEx | *1.26* | 1247 | *0.00* | 1 | *4.96* | 28 | *130.29* | 861 | *2.38* | 1247 |
 | R1 Poly-9 | *1.40* | 1312 | *0.00* | 1 | *7.38* | 40 | *150.88* | 926 | *2.50* | 1312 |
 | A1 Poly-9 | *3.56* | 1404 | *0.88* | 122 | *10.87* | 29 | *475.34* | 1211 | *2.94* | 1404 |
@@ -55,11 +59,12 @@ Sorted by Max ULP. Region definitions: **nz** = near_zero (|x| < 0.5), **cp** = 
 
 1. **tail_pos is trivial**: All methods achieve 0 ULP (for x ≥ 3, bf16-rounded GELU(x) = x)
 2. **core_neg is the bottleneck**: Most high-ULP methods fail at x ≈ -3.5 (TAIL_START boundary)
-3. **Five Pure methods achieve Max ULP ≤ 35**: R5 Pure (33, Mean 0.003), B3 Pure (33, Mean 0.01), D2 Pure (33, Mean 0.01), F3 Pure (33, Mean 0.02), C1 Pure (35, Mean 0.03)
+3. **Six Pure methods achieve Max ULP ≤ 35**: R5 Pure (33, Mean 0.003), B3 Pure (33, Mean 0.01), D2 Pure (33, Mean 0.01), R4 Pure (33, Mean 0.01), F3 Pure (33, Mean 0.02), C1 Pure (35, Mean 0.03)
 4. **Pure methods eliminate shared tail dependency**: All Pure methods use independent asymptotic expansion for deep tail, achieving Max ULP = 33-35 vs 87 for shared-tail versions
 5. **LUT-based methods plateau at 87**: Shared tail LUT limited by interpolation error at x ≈ -7.65; Pure versions avoid this via asymptotic tail
+6. **E4 Hermite blending achieves Max ULP 58**: Smooth transition between polynomial core and asymptotic tail reduces discontinuity error
 
-30 methods implemented: 28 research methods (23 original + 5 Pure variants) across 8 categories from FinalLists.md taxonomy, plus 2 Tenstorrent hardware reference benchmarks.
+34 methods implemented: 32 research methods (23 original + 6 Pure variants + 3 engineering variants) across 8 categories from FinalLists.md taxonomy, plus 2 Tenstorrent hardware reference benchmarks.
 
 ## Background
 
@@ -983,7 +988,7 @@ Based on FinalLists.md, the project follows a phased implementation approach:
 
 ### All Methods Fixed
 
-All methods now achieve Max ULP ≤ 1547 (A1 Poly-7). **The top 12 methods achieve Max ULP ≤ 88**, with R5 Pure and B3 Pure tied at Max ULP = 33.
+All methods now achieve Max ULP ≤ 1547 (A1 Poly-7). **The top 14 methods achieve Max ULP ≤ 88**, with six Pure methods tied at Max ULP = 33.
 
 **Key fixes applied:**
 - **Reference function**: Use `erfc(-z)` for negative x to avoid catastrophic cancellation in `1 + erf(z)`
@@ -1008,7 +1013,7 @@ All methods now achieve Max ULP ≤ 1547 (A1 Poly-7). **The top 12 methods achie
 
 7. **Entire range testing**: Methods optimized for [-8, 8] may fail catastrophically outside this range.
 
-8. **Twelve methods achieve Max ULP ≤ 88**: R5 Pure/B3 Pure/D2 Pure/F3 Pure (33), C1 Pure (35), R5/C1/B3/D2/F2/F3 (87), D4 (88). R4 achieves 166 (boundary at x=-3.5).
+8. **Fourteen methods achieve Max ULP ≤ 88**: R5 Pure/B3 Pure/D2 Pure/F3 Pure/R4 Pure (33), C1 Pure (35), E4 Hermite (58), R5/C1/B3/D2/F2/F3 (87), D4 (88).
 
 9. **B3 erf is the universal fallback**: When arithmetic-only exp() fails (|x| > 2), the B3 piecewise erf (Taylor + A-S rational) provides reliable fallback.
 
