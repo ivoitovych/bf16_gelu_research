@@ -13,7 +13,7 @@ Systematic ULP error analysis of GELU approximations for bfloat16 arithmetic. Se
 
 # Build and run
 g++ -std=c++23 -O3 -march=native -o gelu_analysis gelu_implementations.cpp -lm
-./gelu_analysis --analyze      # Full ULP analysis (26 methods)
+./gelu_analysis --analyze      # Full ULP analysis (30 methods)
 ./gelu_analysis --all          # All analysis modes
 
 # Other modes: --diagnose, --reference, --saturation, --calibrate,
@@ -31,7 +31,7 @@ g++ -std=c++23 -O3 -march=native -o gelu_analysis gelu_implementations.cpp -lm
 | `debug_tools.cpp` | Exploratory debugging tools |
 | `FinalLists.md` | Strategy taxonomy (40 methods, 8 categories) |
 | `README.md` | Full documentation and results |
-| `HISTORY.md` | Development history (14 sessions) |
+| `HISTORY.md` | Development history (16 sessions) |
 | `CLAUDE.md` | This file - project instructions |
 
 ## Constraints
@@ -43,19 +43,20 @@ g++ -std=c++23 -O3 -march=native -o gelu_analysis gelu_implementations.cpp -lm
 
 ## Current Status
 
-**100% taxonomy coverage (41/41 methods). Best: R5 Pure and B3 Pure tied at Max ULP = 33.**
+**30 methods implemented. 5 Pure methods achieve Max ULP ≤ 35, with R5 Pure leading (Max 33, Mean 0.003).**
 
 See [README.md](README.md) for complete results table with per-region analysis.
 
 ### Top Methods
 
-| Method | Max ULP | Notes |
-|--------|---------|-------|
-| **R5 Pure** | **33** | LUT core + asymptotic tail, best Mean ULP (0.003) |
-| **B3 Pure** | **33** | Pure arithmetic, asymptotic expansion |
-| R5/C1/B3/D2/F2/F3 | 87 | Limited by tail LUT interpolation |
-| D4 | 88 | Non-uniform LUT |
-| R4 | 166 | Boundary at x=-3.5 |
+| Method | Max ULP | Mean ULP | Notes |
+|--------|---------|----------|-------|
+| **R5 Pure** | **33** | **0.003** | LUT core + asymptotic tail (best overall) |
+| **B3 Pure** | **33** | 0.01 | Pure arithmetic, asymptotic expansion |
+| **D2 Pure** | **33** | 0.01 | Hybrid LUT+erf + asymptotic tail |
+| **F3 Pure** | **33** | 0.02 | Continued fraction + asymptotic tail |
+| **C1 Pure** | **35** | 0.03 | Cubic spline + asymptotic tail |
+| R5/C1/B3/D2/F2/F3 | 87 | — | Limited by shared tail LUT interpolation |
 
 ### Tenstorrent Hardware Reference Benchmarks
 
@@ -97,6 +98,11 @@ Deep tail (x < -8.3125):
 
 ## Git Commit Rules
 
+**Author**: All commits must use:
+```
+Iaroslav Voitovych <yaroslav.voytovych@gmail.com>
+```
+
 **CRITICAL: NO AI ATTRIBUTION IN COMMITS**
 - Do NOT add "Generated with Claude Code" footer
 - Do NOT add "Co-Authored-By: Claude" lines
@@ -113,3 +119,4 @@ See [HISTORY.md](HISTORY.md) for detailed session-by-session development notes c
 - Session 13: Tenstorrent hardware reference benchmarks (TT Accurate, TT Fast)
 - Session 14: ULP measurement sanity check framework (--sanity flag)
 - Session 15: R5 Pure - LUT with asymptotic tail (ties B3 Pure at Max ULP 33, best Mean ULP 0.003)
+- Session 16: C1/D2/F3 Pure variants (5 Pure methods total, all Max ULP ≤ 35)
