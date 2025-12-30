@@ -13,7 +13,7 @@ Systematic ULP error analysis of GELU approximations for bfloat16 arithmetic. Se
 
 # Build and run
 g++ -std=c++23 -O3 -march=native -o gelu_analysis gelu_implementations.cpp -lm
-./gelu_analysis --analyze      # Full ULP analysis (38 methods)
+./gelu_analysis --analyze      # Full ULP analysis (39 methods)
 ./gelu_analysis --all          # All analysis modes
 
 # Other modes: --diagnose, --reference, --saturation, --calibrate,
@@ -27,11 +27,12 @@ g++ -std=c++23 -O3 -march=native -o gelu_analysis gelu_implementations.cpp -lm
 | File | Description |
 |------|-------------|
 | `gelu_implementations.cpp` | All implementations + analysis framework |
+| `adaptive_poly.cpp` | Standalone adaptive polynomial research tool (C6) |
 | `ulp_calculator.cpp` | Standalone ULP calculator |
 | `debug_tools.cpp` | Exploratory debugging tools |
 | `FinalLists.md` | Strategy taxonomy (40 methods, 8 categories) |
 | `README.md` | Full documentation and results |
-| `HISTORY.md` | Development history (19 sessions) |
+| `HISTORY.md` | Development history (20 sessions) |
 | `CLAUDE.md` | This file - project instructions |
 
 ## Constraints
@@ -46,7 +47,7 @@ g++ -std=c++23 -O3 -march=native -o gelu_analysis gelu_implementations.cpp -lm
 
 ## Current Status
 
-**38 methods implemented. R5 Pure achieves Max ULP = 2 (best overall) after subnormal exp fix.**
+**39 methods implemented. C6: Adaptive Polynomial achieves Max ULP = 1 (best overall).**
 
 See [README.md](README.md) for complete results table with per-region analysis.
 
@@ -54,7 +55,8 @@ See [README.md](README.md) for complete results table with per-region analysis.
 
 | Method | Max ULP | Mean ULP | Notes |
 |--------|---------|----------|-------|
-| **R5 Pure** | **2** | **0.002** | LUT core + asymptotic tail (best overall) |
+| **C6 Adaptive** | **1** | **0.001** | 16 error-optimized segments + asymptotic tail (best overall) |
+| **R5 Pure** | **2** | 0.002 | LUT core + asymptotic tail |
 | **B3 Pure** | **23** | 0.01 | Pure arithmetic, asymptotic expansion |
 | **D2 Pure** | **23** | 0.01 | Hybrid LUT+erf + asymptotic tail |
 | **F3 Pure** | **28** | 0.02 | Continued fraction + asymptotic tail |
@@ -129,3 +131,4 @@ See [HISTORY.md](HISTORY.md) for detailed session-by-session development notes c
 - Session 17: A1 Pure, R4 Pure, E4 Hermite blend, E9 Remez BF16 (6 Pure methods, 34 total)
 - Session 18: Subnormal exp fix (R5 Pure: 33→2, other Pure methods improved)
 - Session 19: Documentation verification - fixed inaccurate README claims about Schraudolph 1999 and A-S 7.1.26
+- Session 20: C6 Adaptive Polynomial - error-driven piecewise optimization achieves Max ULP = 1 (new best)
