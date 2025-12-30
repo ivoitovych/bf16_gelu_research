@@ -13,7 +13,7 @@ Systematic ULP error analysis of GELU approximations for bfloat16 arithmetic. Se
 
 # Build and run
 g++ -std=c++23 -O3 -march=native -o gelu_analysis gelu_implementations.cpp -lm
-./gelu_analysis --analyze      # Full ULP analysis (34 methods)
+./gelu_analysis --analyze      # Full ULP analysis (38 methods)
 ./gelu_analysis --all          # All analysis modes
 
 # Other modes: --diagnose, --reference, --saturation, --calibrate,
@@ -44,7 +44,7 @@ g++ -std=c++23 -O3 -march=native -o gelu_analysis gelu_implementations.cpp -lm
 
 ## Current Status
 
-**34 methods implemented. 6 Pure methods achieve Max ULP ≤ 35, with R5 Pure leading (Max 33, Mean 0.003).**
+**38 methods implemented. 6 Pure methods achieve Max ULP ≤ 35, with R5 Pure leading (Max 33, Mean 0.003).**
 
 See [README.md](README.md) for complete results table with per-region analysis.
 

@@ -1591,3 +1591,90 @@ std::bfloat16_t gelu_f3_pure(std::bfloat16_t x_bf16) {
 **30 methods implemented. 5 Pure methods achieve Max ULP ≤ 35.**
 
 The Pure variant pattern is now fully applied to all high-performing methods. R5 Pure remains the overall best with Max ULP 33 and Mean ULP 0.003.
+
+---
+
+## Session 17: R4 Pure, E4 Hermite Blending, and Extended Pure Variants
+
+### Objective
+Implement remaining recommendations from reviews: transition smoothing (Hermite blending), Remez quantization-aware coefficients, and extend Pure methodology to remaining base methods.
+
+### Implementations Added (8 New Methods)
+
+#### R4 Pure: Tanh-Form + Asymptotic Tail
+```cpp
+std::bfloat16_t gelu_r4_pure(std::bfloat16_t x_bf16) {
+    // Positive saturation: x >= 3
+    if (x >= thresholds::POS) return x;
+
+    // Negative tail: x < -3, use asymptotic expansion
+    if (x < -3.0f) return gelu_asymptotic(x);
+
+    // Core: tanh-form with rational tanh approximation
+    // GELU(x) ≈ 0.5x(1 + tanh(√(2/π)(x + 0.044715x³)))
+}
+```
+- **Result: Max ULP 33, Mean ULP 0.01** - Ties for best!
+- Joins R5 Pure, B3 Pure, D2 Pure, F3 Pure at Max ULP 33
+
+#### E4 Hermite: Transition Blending
+```cpp
+// Blend polynomial core and asymptotic tail in [-4, -3] region
+// Uses Hermite smoothstep: t_blend = 3t² - 2t³
+```
+- **Result: Max ULP 58, Mean ULP 0.05**
+- Smooth C1-continuous transition reduces discontinuity error
+- Better than LUT-based methods (87) but not as good as Pure (33)
+
+#### E4v2 Wide: Extended Blend Region [-5, -2]
+- Wider transition zone to spread blending error
+- **Result: Max ULP 81, Mean ULP 0.08** - Worse than E4
+
+#### E4v3 Quintic: Quintic Smoothstep
+- Uses 6t⁵ - 15t⁴ + 10t³ for C2-continuous blend
+- **Result: Max ULP 61, Mean ULP 0.04** - Similar to E4
+
+#### A1 Pure: Poly-9 + Asymptotic Tail
+- **Result: Max ULP 1211, Mean ULP 2.83**
+- Limited by core_neg polynomial failure at x ≈ -3.0
+
+#### E9 Remez: BF16-Quantized Coefficients
+- Same as A1 Pure with bf16-quantized polynomial coefficients
+- **Result: Max ULP 1211, Mean ULP 2.83**
+- core_neg bottleneck dominates any coefficient optimization
+
+#### B1 Pure: Sigmoid + Asymptotic Tail
+- **Result: Max ULP 759, Mean ULP 1.12**
+- Limited by sigmoid approximation error in core_neg
+
+#### H3 Pure: SoftEx Tanh + Asymptotic Tail
+- Uses exp_softex() Padé approximation for tanh
+- **Result: Max ULP 861, Mean ULP 0.67**
+- Limited by SoftEx exp approximation error in core_neg
+
+### Results Summary
+
+| Method | Max ULP | Mean ULP | Status |
+|--------|---------|----------|--------|
+| **R4 Pure** | **33** | 0.01 | **New best (ties)** |
+| E4 Hermite | 58 | 0.05 | Best transition blend |
+| E4v3 Quintic | 61 | 0.04 | Similar to E4 |
+| E4v2 Wide | 81 | 0.08 | Worse than E4 |
+| B1 Pure | 759 | 1.12 | core_neg limited |
+| H3 Pure | 861 | 0.67 | core_neg limited |
+| A1 Pure | 1211 | 2.83 | core_neg limited |
+| E9 Remez | 1211 | 2.83 | core_neg limited |
+
+### Key Observations
+
+1. **R4 Pure succeeds**: The rational tanh approximation has good core accuracy, so Pure variant achieves Max ULP 33 (166 → 33, 80% reduction).
+
+2. **E4 Hermite is best transition method**: Hermite blending at [-4, -3] achieves Max ULP 58, better than wider blend or quintic smoothstep.
+
+3. **core_neg is the fundamental bottleneck**: A1 Pure, E9 Remez, B1 Pure, and H3 Pure all fail due to polynomial/approximation error in the core negative region (x ≈ -3.0). The asymptotic tail works perfectly (Max ULP 33 in tail_neg), but core_neg errors of 759-1211 dominate.
+
+4. **Six Pure methods now at Max ULP ≤ 35**: R5 Pure, B3 Pure, D2 Pure, R4 Pure, F3 Pure, C1 Pure
+
+### Project Status
+
+**38 methods implemented. 16 methods achieve Max ULP ≤ 88. 6 Pure methods at Max ULP ≤ 35.**
