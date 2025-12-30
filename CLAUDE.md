@@ -44,7 +44,7 @@ g++ -std=c++23 -O3 -march=native -o gelu_analysis gelu_implementations.cpp -lm
 
 ## Current Status
 
-**38 methods implemented. 6 Pure methods achieve Max ULP ≤ 35, with R5 Pure leading (Max 33, Mean 0.003).**
+**38 methods implemented. R5 Pure achieves Max ULP = 2 (best overall) after subnormal exp fix.**
 
 See [README.md](README.md) for complete results table with per-region analysis.
 
@@ -52,11 +52,11 @@ See [README.md](README.md) for complete results table with per-region analysis.
 
 | Method | Max ULP | Mean ULP | Notes |
 |--------|---------|----------|-------|
-| **R5 Pure** | **33** | **0.003** | LUT core + asymptotic tail (best overall) |
-| **B3 Pure** | **33** | 0.01 | Pure arithmetic, asymptotic expansion |
-| **D2 Pure** | **33** | 0.01 | Hybrid LUT+erf + asymptotic tail |
-| **R4 Pure** | **33** | 0.01 | Tanh-form + asymptotic tail |
-| **F3 Pure** | **33** | 0.02 | Continued fraction + asymptotic tail |
+| **R5 Pure** | **2** | **0.002** | LUT core + asymptotic tail (best overall) |
+| **B3 Pure** | **23** | 0.01 | Pure arithmetic, asymptotic expansion |
+| **D2 Pure** | **23** | 0.01 | Hybrid LUT+erf + asymptotic tail |
+| **F3 Pure** | **28** | 0.02 | Continued fraction + asymptotic tail |
+| **R4 Pure** | **29** | 0.01 | Tanh-form + asymptotic tail |
 | **C1 Pure** | **35** | 0.03 | Cubic spline + asymptotic tail |
 | E4 Hermite | 58 | 0.05 | Hermite blending at transition |
 | R5/C1/B3/D2/F2/F3 | 87 | — | Limited by shared tail LUT interpolation |
@@ -74,6 +74,7 @@ These are NOT optimized for full bf16 range - included for precision comparison 
 1. **erfc-based reference**: Avoids catastrophic cancellation in `1 + erf(z)` for large negative z
 2. **Asymptotic expansion**: `GELU(x) ≈ -φ(x)·(1 - 1/x² + 3/x⁴ - 15/x⁶)` beats LUT for deep tail
 3. **Two-tier tail LUT**: 0.25-step main + 0.0625-step fine near underflow boundary
+4. **Subnormal exp handling**: `fast_exp2_neg` handles x down to -149 for deep tail accuracy near bf16 saturation (-13.5625)
 
 ## Quick Reference
 
@@ -124,3 +125,4 @@ See [HISTORY.md](HISTORY.md) for detailed session-by-session development notes c
 - Session 15: R5 Pure - LUT with asymptotic tail (ties B3 Pure at Max ULP 33, best Mean ULP 0.003)
 - Session 16: C1/D2/F3 Pure variants (5 Pure methods total, all Max ULP ≤ 35)
 - Session 17: A1 Pure, R4 Pure, E4 Hermite blend, E9 Remez BF16 (6 Pure methods, 34 total)
+- Session 18: Subnormal exp fix (R5 Pure: 33→2, other Pure methods improved)
