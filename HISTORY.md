@@ -1678,3 +1678,84 @@ std::bfloat16_t gelu_r4_pure(std::bfloat16_t x_bf16) {
 ### Project Status
 
 **38 methods implemented. 16 methods achieve Max ULP ≤ 88. 6 Pure methods at Max ULP ≤ 35.**
+
+## Session 18: Subnormal Exp Fix - R5 Pure Achieves Max ULP = 2
+
+### Root Cause Analysis
+
+Merged saturation analysis branch (`claude/gelu-bfloat16-precision-FLNLx`) which identified exact bf16 saturation thresholds:
+- **Positive saturation**: x ≥ 2.78125 (0x4032) → GELU(x) = x
+- **Negative saturation**: x ≤ -13.5625 (0xc159) → GELU(x) = 0
+
+The Max ULP = 33 error at x ≈ -13.25 was traced to premature underflow in `fast_exp2_neg()`:
+
+```
+At x = -13.25:
+  x²/2 = 87.78
+  exp(-87.78) ≈ 1.4e-39 (should be subnormal float)
+  fast_exp2_neg was returning 0 (cut off at x < -126)
+  But bf16 GELU needs tiny subnormal values until x = -13.5625
+```
+
+### The Fix
+
+Extended `fast_exp2_neg()` to handle float subnormal range (x down to -149):
+
+```cpp
+inline float fast_exp2_neg(float x) {
+    if (x < -149.0f) return 0.0f;  // Beyond subnormal range
+
+    float n = std::floor(x);
+    float f = x - n;
+    // ... polynomial for 2^f ...
+
+    int32_t exp_bits = static_cast<int32_t>(n) + 127;
+
+    if (exp_bits > 0) {
+        // Normal range: standard IEEE754 exponent manipulation
+        uint32_t bits = static_cast<uint32_t>(exp_bits) << 23;
+        float pow2_int;
+        std::memcpy(&pow2_int, &bits, sizeof(float));
+        return pow2_int * pow2_frac;
+    } else {
+        // Subnormal range: scale down from min_normal (2^-126)
+        uint32_t min_normal_bits = 1u << 23;
+        float min_normal;
+        std::memcpy(&min_normal, &min_normal_bits, sizeof(float));
+
+        int32_t subnorm_shift = 1 - exp_bits;
+        if (subnorm_shift >= 24) return 0.0f;
+
+        float scale = min_normal;
+        for (int i = 0; i < subnorm_shift; ++i) {
+            scale *= 0.5f;
+        }
+        return scale * pow2_frac;
+    }
+}
+```
+
+### Results
+
+Dramatic improvement for all Pure methods using asymptotic tail:
+
+| Method | Before | After | Improvement |
+|--------|--------|-------|-------------|
+| **R5 Pure** | 33 | **2** | **94%** |
+| B3 Pure | 33 | 23 | 30% |
+| D2 Pure | 33 | 23 | 30% |
+| F3 Pure | 33 | 28 | 15% |
+| R4 Pure | 33 | 29 | 12% |
+| C1 Pure | 35 | 35 | 0% (core_neg limited) |
+
+### Analysis
+
+- **R5 Pure at Max ULP = 2**: The core LUT has excellent accuracy (Max ULP = 1 in nz/cn), and the asymptotic tail now computes tiny subnormals correctly. Error reduced 94%.
+
+- **B3/D2 Pure at Max ULP = 23**: Their tail error dropped to 2 ULP, but core_neg error of 23 ULP now dominates.
+
+- **C1 Pure unchanged**: Error is in core_neg (Max ULP 12), not tail. The fix only helps tail accuracy.
+
+### Project Status
+
+**38 methods implemented. R5 Pure achieves Max ULP = 2 (best overall). 6 Pure methods at Max ULP ≤ 35.**
