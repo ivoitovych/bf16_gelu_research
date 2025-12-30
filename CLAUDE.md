@@ -36,7 +36,9 @@ g++ -std=c++23 -O3 -march=native -o gelu_analysis gelu_implementations.cpp -lm
 
 ## Constraints
 
-- **Allowed**: `+`, `−`, `×`, `÷`, `|x|`, `sign()`, bit manipulation, polynomial evaluation
+**Hardware Target**: Tenstorrent Wormhole/Blackhole ML accelerators. The tensor core (Tensix) supports only basic arithmetic; transcendental functions require the slower SFPU or must be approximated.
+
+- **Allowed**: `+`, `−`, `×`, `÷`, `|x|`, `sign()`, comparison, bit manipulation, polynomial evaluation
 - **Prohibited**: `std::erf()`, `std::tanh()`, `std::exp()`, `std::log()` (except reference)
 - **Note**: Pure methods use `fast_exp_neg()` via IEEE754 bit manipulation (Schraudolph 1999), not std::exp()
 - **Target**: BFloat16 (1 sign + 8 exponent + 7 mantissa bits)
