@@ -1008,7 +1008,7 @@ All methods now achieve Max ULP ≤ 1547 (A1 Poly-7). **The top 12 methods achie
 
 7. **Entire range testing**: Methods optimized for [-8, 8] may fail catastrophically outside this range.
 
-8. **Eight methods achieve Max ULP ≤ 88**: B3 Pure (33), R5/C1/B3/D2/F2/F3 (87), D4 (88). R4 achieves 166 (boundary at x=-3.5).
+8. **Twelve methods achieve Max ULP ≤ 88**: R5 Pure/B3 Pure/D2 Pure/F3 Pure (33), C1 Pure (35), R5/C1/B3/D2/F2/F3 (87), D4 (88). R4 achieves 166 (boundary at x=-3.5).
 
 9. **B3 erf is the universal fallback**: When arithmetic-only exp() fails (|x| > 2), the B3 piecewise erf (Taylor + A-S rational) provides reliable fallback.
 
