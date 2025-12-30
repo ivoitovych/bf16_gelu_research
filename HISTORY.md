@@ -1799,3 +1799,57 @@ Two inaccurate claims in README.md were discovered:
 ### Lesson
 
 Documentation must accurately reflect implementation. Mathematical references should clarify whether we use the exact method or a related/inspired technique.
+
+## Session 20: C6 Adaptive Polynomial
+
+### Goal
+Implement a new adaptive piecewise polynomial approach with error-driven boundary optimization to achieve sub-2 ULP accuracy.
+
+### Approach
+
+1. **Standalone research tool** (`adaptive_poly.cpp`): Configurable segments, polynomial degree, and iterative refinement
+2. **Least-squares fitting**: Normal equations in float64 for coefficient computation
+3. **Iterative boundary optimization**: Adjust segment widths based on per-segment max ULP error
+4. **Special region handling**:
+   - Near-zero (|x| < 0.125): Taylor expansion `x * (0.5 + x/√(2π))`
+   - Deep tail (x < -3.5): Asymptotic expansion with `fast_exp2_neg()` for subnormal handling
+
+### Implementation Challenges
+
+1. **Segment collapse**: Initial refinement algorithm caused segments to collapse to zero width
+   - Fixed: Smooth blending (70% new, 30% old) with minimum width constraints
+
+2. **Near-zero catastrophic error** (Max ULP ~27000): bf16 has ~32000 values in near-zero region
+   - Fixed: Taylor expansion for |x| < 0.125
+
+3. **Deep tail error** (Max ULP ~11000): Polynomial can't approximate tiny subnormals
+   - Fixed: Asymptotic expansion for x < -3.5
+
+4. **Subnormal exp handling**: Max ULP = 14 at x = -13.3125
+   - Fixed: Proper `fast_exp2_neg()` with subnormal loop from main codebase
+
+### Results
+
+Optimal configuration: **16 segments, degree 4** (80 coefficients total)
+
+| Method | Max ULP | Mean ULP | Notes |
+|--------|---------|----------|-------|
+| **C6 Adaptive** | **1** | **0.001** | New best! |
+| R5 Pure | 2 | 0.002 | Previous best |
+
+Per-region breakdown for C6:
+- near_zero: Max 1, Mean 0.00
+- core_pos: Max 1, Mean 0.04  
+- core_neg: Max 1, Mean 0.02
+- tail_pos: Max 0, Mean 0.00
+- tail_neg: Max 1, Mean 0.00
+
+### Integration
+
+Added to `gelu_implementations.cpp`:
+- Namespace `c6_adaptive` with precomputed coefficients
+- Function `gelu_c6_adaptive()` using same near-zero and asymptotic handling
+
+### Project Status
+
+**39 methods implemented. C6: Adaptive Polynomial achieves Max ULP = 1 (best overall).**
