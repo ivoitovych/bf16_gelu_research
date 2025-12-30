@@ -8,9 +8,9 @@ This project implements and evaluates multiple GELU approximation strategies opt
 
 ### Key Achievements
 
-**14 methods achieve Max ULP ≤ 88** with 6 Pure methods at Max ULP ≤ 35. R5 Pure achieves best overall performance (Max ULP = 33, Mean ULP = 0.003). Deep tail accuracy achieved via asymptotic expansion `GELU(x) ≈ -φ(x)·(1 - 1/x² + 3/x⁴ - 15/x⁶)` and erfc-based reference to avoid catastrophic cancellation.
+**16 methods achieve Max ULP ≤ 88** with 6 Pure methods at Max ULP ≤ 35. R5 Pure achieves best overall performance (Max ULP = 33, Mean ULP = 0.003). Deep tail accuracy achieved via asymptotic expansion `GELU(x) ≈ -φ(x)·(1 - 1/x² + 3/x⁴ - 15/x⁶)` and erfc-based reference to avoid catastrophic cancellation.
 
-### Complete Results Table (All 34 Methods)
+### Complete Results Table (All 38 Methods)
 
 Sorted by Max ULP. Region definitions: **nz** = near_zero (|x| < 0.5), **cp** = core_pos (0.5 ≤ x < 3), **cn** = core_neg (-3 ≤ x < -0.5), **tn** = tail_neg (x < -3).
 
@@ -25,6 +25,8 @@ Sorted by Max ULP. Region definitions: **nz** = near_zero (|x| < 0.5), **cp** = 
 | **C1 Pure** | ***0.03*** | **35** | *0.00* | 1 | *0.07* | 1 | *4.09* | 12 | *0.03* | 35 |
 | **R4 Pure** | ***0.01*** | **33** | *0.00* | 1 | *0.03* | 1 | *1.75* | 29 | *0.01* | 33 |
 | E4 Hermite | *0.05* | 58 | *0.00* | 0 | *0.04* | 1 | *2.03* | 23 | *0.14* | 58 |
+| E4v3 Quintic | *0.04* | 61 | *0.00* | 0 | *0.04* | 1 | *2.03* | 23 | *0.13* | 61 |
+| E4v2 Wide | *0.08* | 81 | *0.00* | 0 | *0.04* | 1 | *1.72* | 17 | *0.30* | 81 |
 | R5 LUT | *0.07* | 87 | *0.00* | 1 | *0.00* | 0 | *0.03* | 1 | *0.29* | 87 |
 | B3 Erf Poly | *0.11* | 87 | *0.00* | 0 | *0.04* | 1 | *2.03* | 23 | *0.40* | 87 |
 | C1 Spline | *0.10* | 87 | *0.00* | 1 | *0.07* | 1 | *4.09* | 12 | *0.31* | 87 |
@@ -35,8 +37,10 @@ Sorted by Max ULP. Region definitions: **nz** = near_zero (|x| < 0.5), **cp** = 
 | R4 Tanh | *0.11* | 166 | *0.00* | 1 | *0.03* | 1 | *1.75* | 29 | *0.42* | 166 |
 | B4 Rational | *0.56* | 535 | *0.00* | 1 | *2.07* | 5 | *54.32* | 314 | *1.13* | 535 |
 | B1v2 Sigmoid | *1.47* | 625 | *0.93* | 106 | *13.91* | 40 | *129.44* | 352 | *1.25* | 625 |
+| B1 Pure | *1.12* | 759 | *0.50* | 35 | *10.81* | 24 | *166.64* | 759 | *0.01* | 33 |
 | D3 LUT+Corr | *1.82* | 830 | *0.82* | 94 | *23.27* | 53 | *185.06* | 440 | *1.55* | 830 |
 | R3 PWL | *36.82* | 832 | *72.59* | 98 | *1.50* | 6 | *112.68* | 518 | *1.58* | 832 |
+| H3 Pure | *0.67* | 861 | *0.00* | 1 | *4.96* | 28 | *130.29* | 861 | *0.01* | 33 |
 | C2 Piecewise | *1.15* | 881 | *0.00* | 1 | *4.35* | 27 | *135.89* | 881 | *1.86* | 870 |
 | B1 Sigmoid | *1.64* | 1068 | *0.50* | 35 | *10.81* | 24 | *166.64* | 759 | *2.10* | 1068 |
 | E3 Range-Scale | *1.72* | 1130 | *0.07* | 21 | *5.98* | 15 | *225.87* | 822 | *2.22* | 1130 |
@@ -64,7 +68,7 @@ Sorted by Max ULP. Region definitions: **nz** = near_zero (|x| < 0.5), **cp** = 
 5. **LUT-based methods plateau at 87**: Shared tail LUT limited by interpolation error at x ≈ -7.65; Pure versions avoid this via asymptotic tail
 6. **E4 Hermite blending achieves Max ULP 58**: Smooth transition between polynomial core and asymptotic tail reduces discontinuity error
 
-34 methods implemented: 32 research methods (23 original + 6 Pure variants + 3 engineering variants) across 8 categories from FinalLists.md taxonomy, plus 2 Tenstorrent hardware reference benchmarks.
+38 methods implemented: 36 research methods (23 original + 9 Pure variants + 4 engineering variants) across 8 categories from FinalLists.md taxonomy, plus 2 Tenstorrent hardware reference benchmarks.
 
 ## Background
 
