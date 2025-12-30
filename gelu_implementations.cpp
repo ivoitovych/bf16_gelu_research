@@ -1127,6 +1127,74 @@ std::bfloat16_t gelu_c1_cubic_spline(std::bfloat16_t x_bf16) {
 }
 
 // ============================================================================
+// C1 PURE: CUBIC HERMITE SPLINE WITH ASYMPTOTIC TAIL
+// ============================================================================
+
+/**
+ * @brief C1 Pure: Cubic Hermite spline with asymptotic expansion for tail
+ *
+ * Like C1 Spline but uses asymptotic expansion for deep negative tail
+ * instead of the shared tail LUT. This ensures complete methodological
+ * independence and eliminates the interpolation error that limits
+ * the original C1 to Max ULP = 87.
+ *
+ * - Core region: Cubic Hermite spline with monotonicity preservation
+ * - Negative tail (x < -3.5): Asymptotic expansion GELU(x) ≈ -φ(x)·(1 - 1/x² + 3/x⁴ - 15/x⁶)
+ * - Positive saturation (x >= 3): GELU(x) = x
+ */
+std::bfloat16_t gelu_c1_pure(std::bfloat16_t x_bf16) {
+    using namespace cubic_spline;
+    float x = static_cast<float>(x_bf16);
+
+    if (x >= thresholds::POS) {
+        return static_cast<std::bfloat16_t>(x);
+    }
+    // Negative tail: use asymptotic expansion directly (Pure version)
+    if (x < thresholds::TAIL_START) {
+        return static_cast<std::bfloat16_t>(gelu_asymptotic(x));
+    }
+
+    // Special case for near-zero: GELU(x) ≈ 0.5*x + 0.39894*x² + 0.0997*x³
+    // For |x| < 0.125, the cubic Taylor expansion is very accurate
+    float abs_x = std::abs(x);
+    if (abs_x < 0.125f) {
+        // GELU(x) = x * Φ(x), near 0: Φ(x) ≈ 0.5 + 0.39894*x + small terms
+        // GELU(x) ≈ 0.5*x + 0.39894*x² + ...
+        // Use quadratic approximation for better accuracy
+        float x2 = x * x;
+        return static_cast<std::bfloat16_t>(0.5f * x + 0.39894228f * x2);
+    }
+
+    // Find segment (9 segments with knot at x=-3)
+    int seg = 0;
+    if (x < -3.0f) seg = 0;       // [-4, -3]
+    else if (x < -2.0f) seg = 1;  // [-3, -2]
+    else if (x < -1.0f) seg = 2;  // [-2, -1]
+    else if (x < -0.5f) seg = 3;  // [-1, -0.5]
+    else if (x < 0.0f) seg = 4;   // [-0.5, 0]
+    else if (x < 0.5f) seg = 5;   // [0, 0.5]
+    else if (x < 1.0f) seg = 6;   // [0.5, 1]
+    else if (x < 2.0f) seg = 7;   // [1, 2]
+    else seg = 8;                  // [2, 4]
+
+    // Get segment bounds and compute Hermite coefficients
+    float x0 = knots[seg];
+    float x1 = knots[seg + 1];
+    float h = x1 - x0;
+
+    CubicCoeffs c = hermite_cubic(
+        gelu_at_knots[seg], gelu_at_knots[seg + 1],
+        deriv_at_knots[seg], deriv_at_knots[seg + 1], h
+    );
+
+    // Evaluate cubic at t = x - x0
+    float t = x - x0;
+    float result = c.a + t * (c.b + t * (c.c + t * c.d));
+
+    return static_cast<std::bfloat16_t>(result);
+}
+
+// ============================================================================
 // B3: ERF POLYNOMIAL (ABRAMOWITZ-STEGUN) → Φ → GELU
 // ============================================================================
 
@@ -1587,6 +1655,74 @@ std::bfloat16_t gelu_d2_lut_poly_hybrid(std::bfloat16_t x_bf16) {
 }
 
 // ============================================================================
+// D2 PURE: HYBRID LUT+ERF WITH ASYMPTOTIC TAIL
+// ============================================================================
+
+/**
+ * @brief D2 Pure: Hybrid LUT+Erf with asymptotic expansion for tail
+ *
+ * Like D2 LUT+Erf Hybrid but uses asymptotic expansion for deep negative tail
+ * instead of the shared tail LUT. This ensures complete methodological
+ * independence and eliminates the interpolation error that limits
+ * the original D2 to Max ULP = 87.
+ *
+ * - Core region: B3-style piecewise erf (Taylor + rational)
+ * - Negative tail (x < -3.5): Asymptotic expansion GELU(x) ≈ -φ(x)·(1 - 1/x² + 3/x⁴ - 15/x⁶)
+ * - Positive saturation (x >= 3): GELU(x) = x
+ */
+std::bfloat16_t gelu_d2_pure(std::bfloat16_t x_bf16) {
+    float x = static_cast<float>(x_bf16);
+
+    // Positive tail: x >= 3 → GELU(x) ≈ x
+    if (x >= thresholds::POS) {
+        return x_bf16;
+    }
+
+    // Negative tail: use asymptotic expansion directly (Pure version)
+    // Use -3.0f threshold (not -3.5) to avoid B3 erf boundary error
+    if (x < -3.0f) {
+        return static_cast<std::bfloat16_t>(gelu_asymptotic(x));
+    }
+
+    // Core region: use B3-style piecewise erf approximation
+    constexpr float inv_sqrt_2 = 0.7071067811865475f;
+    float z = x * inv_sqrt_2;
+    float abs_z = std::abs(z);
+    float z2 = z * z;
+
+    float erf_z;
+    if (abs_z < 1.0f) {
+        // Taylor series for small z
+        constexpr float two_over_sqrt_pi = 1.1283791670955126f;
+        float z4 = z2 * z2;
+        float z6 = z4 * z2;
+        float series = 1.0f - 0.333333333f * z2 + 0.1f * z4 - 0.023809524f * z6;
+        erf_z = two_over_sqrt_pi * z * series;
+    } else {
+        // Rational approximation for |z| >= 1 (Abramowitz-Stegun style)
+        constexpr float a1 = 0.278393f;
+        constexpr float a2 = 0.230389f;
+        constexpr float a3 = 0.000972f;
+        constexpr float a4 = 0.078108f;
+
+        float t = abs_z;
+        float t2 = t * t;
+        float t3 = t2 * t;
+        float t4 = t2 * t2;
+        float p = a1 * t + a2 * t2 + a3 * t3 + a4 * t4;
+        float denom = 1.0f + p;
+        float abs_erf = 1.0f - 1.0f / (denom * denom * denom * denom);
+        erf_z = (z >= 0) ? abs_erf : -abs_erf;
+    }
+
+    erf_z = std::max(-1.0f, std::min(1.0f, erf_z));
+    float phi = 0.5f * (1.0f + erf_z);
+    float result = x * phi;
+
+    return static_cast<std::bfloat16_t>(result);
+}
+
+// ============================================================================
 // D3: LUT + POLYNOMIAL CORRECTION
 // ============================================================================
 
@@ -1880,6 +2016,40 @@ std::bfloat16_t gelu_f3_cf_erf(std::bfloat16_t x_bf16) {
         float erf_z = (z >= 0) ? abs_erf : -abs_erf;
         float phi = 0.5f * (1.0f + erf_z);
         return static_cast<std::bfloat16_t>(xf * phi);
+    }
+
+    double z = x * constants::INV_SQRT_2;
+    double erf_z = erf_continued_fraction_f64(z);
+    double phi = 0.5 * (1.0 + erf_z);
+    double result = x * phi;
+
+    return static_cast<std::bfloat16_t>(static_cast<float>(result));
+}
+
+// ============================================================================
+// F3 PURE: CONTINUED FRACTION ERF WITH ASYMPTOTIC TAIL
+// ============================================================================
+
+/**
+ * @brief F3 Pure: Continued fraction erf with asymptotic expansion for tail
+ *
+ * Like F3 CF Erf but uses asymptotic expansion for deep negative tail
+ * instead of the shared tail LUT. This ensures complete methodological
+ * independence and eliminates the interpolation error that limits
+ * the original F3 to Max ULP = 87.
+ *
+ * - Core region: Continued fraction erf approximation
+ * - Negative tail (x < -2.0): Asymptotic expansion GELU(x) ≈ -φ(x)·(1 - 1/x² + 3/x⁴ - 15/x⁶)
+ * - Positive saturation (x >= 3): GELU(x) = x
+ */
+std::bfloat16_t gelu_f3_pure(std::bfloat16_t x_bf16) {
+    double x = static_cast<double>(static_cast<float>(x_bf16));
+
+    if (x >= thresholds::POS) return x_bf16;
+
+    // Pure version: use asymptotic expansion for negative tail
+    if (x < -2.0) {
+        return static_cast<std::bfloat16_t>(gelu_asymptotic(static_cast<float>(x)));
     }
 
     double z = x * constants::INV_SQRT_2;
@@ -2714,7 +2884,13 @@ void run_regression_suite(const UlpCalculator& ulp_calc) {
         {"B1: Sigmoid-based GELU", gelu_b1_sigmoid},
         {"B1v2: Sigmoid (higher-order)", gelu_b1_sigmoid_v2},
         {"B3: Erf Polynomial (A-S)", gelu_b3_erf_poly},
+        {"B3 Pure: Erf (no LUT)", gelu_b3_pure},
         {"C1: Cubic Spline", gelu_c1_cubic_spline},
+        {"C1 Pure: Spline + Asymptotic", gelu_c1_pure},
+        {"D2: LUT Tails + Poly Center", gelu_d2_lut_poly_hybrid},
+        {"D2 Pure: Hybrid + Asymptotic", gelu_d2_pure},
+        {"F3: CF Erf Reference", gelu_f3_cf_erf},
+        {"F3 Pure: CF + Asymptotic", gelu_f3_pure},
         {"R1: C4 Saturation + Poly-9 Core", gelu_r1_saturation_poly},
         {"R2: A2 Rational Pade", gelu_r2_rational_pade},
         {"R3: C3 PWL (Power-of-2)", gelu_r3_pwl},
@@ -3003,7 +3179,13 @@ void run_diagnostics(const UlpCalculator& ulp_calc) {
         {"B1: Sigmoid-based GELU", gelu_b1_sigmoid},
         {"B1v2: Sigmoid (higher-order)", gelu_b1_sigmoid_v2},
         {"B3: Erf Polynomial (A-S)", gelu_b3_erf_poly},
+        {"B3 Pure: Erf (no LUT)", gelu_b3_pure},
         {"C1: Cubic Spline (8 seg)", gelu_c1_cubic_spline},
+        {"C1 Pure: Spline + Asymptotic", gelu_c1_pure},
+        {"D2: LUT Tails + Poly Center", gelu_d2_lut_poly_hybrid},
+        {"D2 Pure: Hybrid + Asymptotic", gelu_d2_pure},
+        {"F3: CF Erf Reference", gelu_f3_cf_erf},
+        {"F3 Pure: CF + Asymptotic", gelu_f3_pure},
         {"R1: C4 Saturation + Poly-9 Core", gelu_r1_saturation_poly},
         {"R2: A2 Rational Pade", gelu_r2_rational_pade},
         {"R3: C3 PWL (Power-of-2)", gelu_r3_pwl},
@@ -4448,6 +4630,7 @@ int main(int argc, char* argv[]) {
             {"B4: Rational Erf (range red)", gelu_b4_rational_erf},
             // Category C: Piecewise methods
             {"C1: Cubic Spline (8 seg)", gelu_c1_cubic_spline},
+            {"C1 Pure: Spline + Asymptotic", gelu_c1_pure},
             {"C2: Piecewise Rational", gelu_c2_piecewise_rational},
             // Category R: Recommended baselines
             {"R1: C4 Saturation + Poly-9", gelu_r1_saturation_poly},
@@ -4458,6 +4641,7 @@ int main(int argc, char* argv[]) {
             {"R5 Pure: LUT + Asymptotic", gelu_r5_pure},
             // Category D: Hybrid & LUT-based
             {"D2: LUT Tails + Poly Center", gelu_d2_lut_poly_hybrid},
+            {"D2 Pure: Hybrid + Asymptotic", gelu_d2_pure},
             {"D3: LUT + Poly Correction", gelu_d3_lut_correction},
             {"D4: Non-uniform LUT", gelu_d4_nonuniform_lut},
             // Category E: Engineering variants
@@ -4465,6 +4649,7 @@ int main(int argc, char* argv[]) {
             // Category F: Reference methods (arithmetic-only)
             {"F2: Numerical Quadrature", gelu_f2_quadrature},
             {"F3: CF Erf Reference", gelu_f3_cf_erf},
+            {"F3 Pure: CF + Asymptotic", gelu_f3_pure},
             // Category H: Advanced
             {"H2: GELU-Softmax Unit", gelu_h2_softmax_unit},
             {"H3: SoftEx Tanh", gelu_h3_softex},
