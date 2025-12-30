@@ -1759,3 +1759,43 @@ Dramatic improvement for all Pure methods using asymptotic tail:
 ### Project Status
 
 **38 methods implemented. R5 Pure achieves Max ULP = 2 (best overall). 6 Pure methods at Max ULP ≤ 35.**
+
+## Session 19: Documentation Verification
+
+### Issue
+User requested verification that README claims match implementation code.
+
+### Findings
+
+Two inaccurate claims in README.md were discovered:
+
+1. **Schraudolph 1999 citation**: README claimed `fast_exp_neg()` uses "Schraudolph 1999" but:
+   - Schraudolph's method is a single multiply-add trick for fast exp
+   - Our code uses IEEE754 bit manipulation (2^n via exponent) + minimax polynomial (2^f)
+   - These are related techniques but not the same
+
+2. **Abramowitz-Stegun 7.1.26 citation**: README showed the A-S formula:
+   ```
+   erf(z) ≈ 1 - (a₁t + a₂t² + a₃t³ + a₄t⁴) · exp(-z²)
+   ```
+   But our code uses:
+   ```
+   erf(z) ≈ sign(z) · (1 - 1/(1 + p(|z|))⁴)
+   ```
+   This is an exp-free rational approximation, NOT A-S 7.1.26.
+
+### Fixes
+
+1. **README.md**:
+   - Corrected "Arithmetic-Only Policy Clarification" to describe actual techniques
+   - Updated B3 Pure method description to show exp-free rational formula
+   - Updated B4 method description to show exp approximation via rational
+   - Updated Key Finding #9 to say "exp-free rational" instead of "A-S rational"
+   - Added clarification to References section explaining our relationship to cited works
+
+2. **CLAUDE.md**:
+   - Fixed constraint note to say "IEEE754 bit manipulation + minimax polynomial"
+
+### Lesson
+
+Documentation must accurately reflect implementation. Mathematical references should clarify whether we use the exact method or a related/inspired technique.

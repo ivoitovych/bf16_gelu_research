@@ -250,8 +250,8 @@ All implementations avoid standard library transcendental function calls:
 
 **Arithmetic-Only Policy Clarification**: The mathematical definition of GELU uses `erf()` and the asymptotic expansion uses `exp()`. Our **implementations** approximate these using only allowed operations:
 
-- `exp(-u)` is computed via `fast_exp_neg()`: IEEE754 bit manipulation + polynomial refinement (Schraudolph 1999)
-- `erf(z)` is approximated via rational polynomials (Abramowitz-Stegun 7.1.26)
+- `exp(-u)` is computed via `fast_exp_neg()`: IEEE754 bit manipulation for 2^n, plus minimax polynomial for 2^f
+- `erf(z)` is approximated via exp-free rational polynomials (different from A-S 7.1.26 which requires exp)
 
 This maps efficiently to hardware multipliers and integer ALUs, avoiding SFPU transcendental calls.
 
@@ -287,11 +287,12 @@ The approximation challenge is computing `erf(z)` without transcendental functio
 For z = x/√2:
 
 If |z| < 1:  Use Taylor series
-  erf(z) ≈ (2/√π) · z · (1 - z²/3 + z⁴/10 - z⁶/42 + z⁸/216)
+  erf(z) ≈ (2/√π) · z · (1 - z²/3 + z⁴/10 - z⁶/42)
 
-If |z| ≥ 1:  Use Abramowitz-Stegun rational (7.1.26)
-  erf(z) ≈ 1 - (a₁t + a₂t² + a₃t³ + a₄t⁴) · exp(-z²)
-  where t = 1/(1 + p|z|), p = 0.3275911
+If |z| ≥ 1:  Use exp-free rational approximation
+  erf(z) ≈ sign(z) · (1 - 1/(1 + p(|z|))⁴)
+  where p(t) = a₁t + a₂t² + a₃t³ + a₄t⁴
+  (NOT A-S 7.1.26, which requires exp(-z²))
 
 Then: Φ(x) = 0.5 · (1 + erf(z))   for x ≥ 0
       Φ(x) = 0.5 · erfc(-z)       for x < 0  (avoids cancellation)
@@ -682,11 +683,15 @@ Tail: For x < -3.5, use precomputed tail LUT with linear interpolation
 For z = x/√2:
 
 If |z| < 1:
-  erf(z) ≈ z · (p₀ + p₁z² + p₂z⁴) / (1 + q₁z² + q₂z⁴)
+  erf(z) ≈ z · (2/√π) · (p₀ + p₁z² + p₂z⁴) / (1 + q₁z² + q₂z⁴)
 
-If |z| ≥ 1:
-  erf(z) ≈ sign(z) · (1 - R(|z|) · exp(-z²))
-  where R(z) is Abramowitz-Stegun rational
+If 1 ≤ |z| < 4:
+  Uses A-S coefficients with exp(-z²) approximated by rational:
+  exp(-z²) ≈ 1/(1 + z²·(1 + z²·0.5))
+  (avoids std::exp() while keeping similar structure)
+
+If |z| ≥ 4:
+  erf(z) ≈ ±1 (saturate)
 ```
 
 **Why range reduction**: Near z=0, erf is smooth and polynomial-like. For |z| > 1, erf approaches ±1 exponentially, needing different form.
@@ -1038,7 +1043,7 @@ All methods now achieve Max ULP ≤ 1547 (A1 Poly-7). **The top 16 methods achie
 
 8. **Sixteen methods achieve Max ULP ≤ 88**: R5 Pure/B3 Pure/D2 Pure/F3 Pure/R4 Pure (33), C1 Pure (35), E4 Hermite (58), E4v3 (61), E4v2 (81), R5/C1/B3/D2/F2/F3 (87), D4 (88).
 
-9. **B3 erf is the universal fallback**: When arithmetic-only exp() fails (|x| > 2), the B3 piecewise erf (Taylor + A-S rational) provides reliable fallback.
+9. **B3 erf is the universal fallback**: When arithmetic-only exp() fails (|x| > 2), the B3 piecewise erf (Taylor + exp-free rational) provides reliable fallback.
 
 10. **Pure arithmetic can beat LUT**: B3 Pure (no LUT, Max ULP 33) outperforms all LUT-based methods (Max ULP 87) by using asymptotic expansion.
 
@@ -1047,8 +1052,8 @@ All methods now achieve Max ULP ≤ 1547 (A1 Poly-7). **The top 16 methods achie
 ## References
 
 - Hendrycks, D., & Gimpel, K. (2016). Gaussian Error Linear Units (GELUs). arXiv:1606.08415
-- Abramowitz, M., & Stegun, I. A. (1964). Handbook of Mathematical Functions, Section 7.1.26 (erf/erfc)
-- Schraudolph, N. N. (1999). A Fast, Compact Approximation of the Exponential Function. Neural Computation, 11(4), 853-862
+- Abramowitz, M., & Stegun, I. A. (1964). Handbook of Mathematical Functions. Section 7.1.26 provides erf/erfc formulas; we use exp-free variants that avoid their exp(-x²) terms.
+- Schraudolph, N. N. (1999). A Fast, Compact Approximation of the Exponential Function. Neural Computation. Our `fast_exp_neg()` uses IEEE754 bit manipulation + minimax polynomial, a related but different technique.
 - Fritsch, F. N., & Carlson, R. E. (1980). Monotone Piecewise Cubic Interpolation. SIAM J. Numerical Analysis, 17(2), 238-246
 - NIST Digital Library of Mathematical Functions, Chapter 7: Error Functions and Mill's Ratio. https://dlmf.nist.gov/7
 - Higham, N. J. (2019). The Rise of bfloat16. SIAM News
