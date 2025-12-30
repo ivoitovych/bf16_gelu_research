@@ -31,7 +31,7 @@ g++ -std=c++23 -O3 -march=native -o gelu_analysis gelu_implementations.cpp -lm
 | `debug_tools.cpp` | Exploratory debugging tools |
 | `FinalLists.md` | Strategy taxonomy (40 methods, 8 categories) |
 | `README.md` | Full documentation and results |
-| `HISTORY.md` | Development history (18 sessions) |
+| `HISTORY.md` | Development history (19 sessions) |
 | `CLAUDE.md` | This file - project instructions |
 
 ## Constraints
@@ -40,7 +40,7 @@ g++ -std=c++23 -O3 -march=native -o gelu_analysis gelu_implementations.cpp -lm
 
 - **Allowed**: `+`, `−`, `×`, `÷`, `|x|`, `sign()`, comparison, bit manipulation, polynomial evaluation
 - **Prohibited**: `std::erf()`, `std::tanh()`, `std::exp()`, `std::log()` (except reference)
-- **Note**: Pure methods use `fast_exp_neg()` via IEEE754 bit manipulation (Schraudolph 1999), not std::exp()
+- **Note**: Pure methods use `fast_exp_neg()` (IEEE754 bit manipulation + minimax polynomial), not std::exp()
 - **Target**: BFloat16 (1 sign + 8 exponent + 7 mantissa bits)
 - **Metric**: ULP error (worst-case max-ULP), not MSE
 
@@ -128,3 +128,4 @@ See [HISTORY.md](HISTORY.md) for detailed session-by-session development notes c
 - Session 16: C1/D2/F3 Pure variants (5 Pure methods total, all Max ULP ≤ 35)
 - Session 17: A1 Pure, R4 Pure, E4 Hermite blend, E9 Remez BF16 (6 Pure methods, 34 total)
 - Session 18: Subnormal exp fix (R5 Pure: 33→2, other Pure methods improved)
+- Session 19: Documentation verification - fixed inaccurate README claims about Schraudolph 1999 and A-S 7.1.26
