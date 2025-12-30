@@ -14,7 +14,7 @@ This project implements and evaluates multiple GELU approximation strategies opt
 
 Sorted by Max ULP. Region definitions: **nz** = near_zero (|x| < 0.5), **cp** = core_pos (0.5 ≤ x < 3), **cn** = core_neg (-3 ≤ x < -0.5), **tn** = tail_neg (x < -3).
 
-> **Note**: The tail_pos region (x ≥ 3) achieves **exactly 0 ULP for all methods** because GELU(x) = x·Φ(x) ≈ x when Φ(x) → 1, and the saturation `GELU(x) = x` is mathematically exact.
+> **Note**: The tail_pos region (x ≥ 3) achieves **exactly 0 ULP for all methods** because for bf16 precision, GELU(x) = x·Φ(x) becomes indistinguishable from x when Φ(x) rounds to 1.0. The saturation `GELU(x) = x` is bf16-rounding exact beyond this threshold.
 
 | Method | *Mean* | Max | *nz Mean* | nz Max | *cp Mean* | cp Max | *cn Mean* | cn Max | *tn Mean* | tn Max |
 |--------|--------|-----|-----------|--------|-----------|--------|-----------|--------|-----------|--------|
@@ -53,7 +53,7 @@ Sorted by Max ULP. Region definitions: **nz** = near_zero (|x| < 0.5), **cp** = 
 
 ### Key Observations
 
-1. **tail_pos is trivial**: All methods achieve 0 ULP (saturation x ≥ 3 → GELU(x) = x)
+1. **tail_pos is trivial**: All methods achieve 0 ULP (for x ≥ 3, bf16-rounded GELU(x) = x)
 2. **core_neg is the bottleneck**: Most high-ULP methods fail at x ≈ -3.5 (TAIL_START boundary)
 3. **Five Pure methods achieve Max ULP ≤ 35**: R5 Pure (33, Mean 0.003), B3 Pure (33, Mean 0.01), D2 Pure (33, Mean 0.01), F3 Pure (33, Mean 0.02), C1 Pure (35, Mean 0.03)
 4. **Pure methods eliminate shared tail dependency**: All Pure methods use independent asymptotic expansion for deep tail, achieving Max ULP = 33-35 vs 87 for shared-tail versions
@@ -233,9 +233,11 @@ Worst input: -13.2500 (0xc154)
 
 ### Approximation Constraints
 
-All implementations use only basic arithmetic:
-- **Allowed**: `+`, `-`, `*`, `/`, `|x|`, `sign()`
-- **Prohibited**: `erf()`, `tanh()`, `exp()`, `log()` (except in reference implementation)
+All implementations avoid standard library transcendental function calls:
+- **Allowed**: `+`, `-`, `*`, `/`, `|x|`, `sign()`, bit manipulation, polynomial evaluation
+- **Prohibited**: `std::erf()`, `std::tanh()`, `std::exp()`, `std::log()` (except in reference implementation)
+
+**Arithmetic-Only Policy Clarification**: The "Pure" methods use `fast_exp_neg()` for the asymptotic tail, which computes `exp(-u)` via IEEE754 bit manipulation and polynomial refinement—not via `std::exp()`. This technique maps efficiently to hardware multipliers and integer ALUs, avoiding expensive SFPU transcendental operations. See: Schraudolph, N.N. (1999) "A Fast, Compact Approximation of the Exponential Function" Neural Computation 11(4), 853-862.
 
 ### Mathematical Foundation
 
@@ -291,7 +293,7 @@ where φ(x) = exp(-x²/2) / √(2π) is computed via:
   exp(-u) = 2^(-u/ln2) using IEEE754 bit manipulation
 ```
 
-**Why it works**: The asymptotic series converges rapidly for |x| > 3 since each term is O(1/x²) smaller. Truncating at x⁻⁶ gives sufficient precision for bf16.
+**Why it works**: This Poincaré-type asymptotic series provides rapidly decreasing term magnitudes for |x| > 3, with each successive term O(1/x²) smaller. Truncating at x⁻⁶ gives sufficient precision for bf16's 7-bit mantissa.
 
 **Result**: Mean ULP 0.01, Max ULP 33. No LUT required.
 
@@ -333,7 +335,7 @@ Negative tail (x < -3): Asymptotic expansion
 Positive saturation (x ≥ 3): GELU(x) = x
 ```
 
-**Why it works**: The asymptotic series converges rapidly for |x| > 3, avoiding the interpolation error that limits R5 LUT to Max ULP 87. Combines the accuracy of LUT interpolation in the core region with the precision of analytical asymptotic expansion in the tail.
+**Why it works**: The asymptotic series provides rapidly decreasing term magnitudes for |x| > 3, avoiding the interpolation error that limits R5 LUT to Max ULP 87. Combines the accuracy of LUT interpolation in the core region with the precision of analytical asymptotic expansion in the tail.
 
 **Result**: Mean ULP 0.003, Max ULP 33. Ties with B3 Pure for best Max ULP but has 3× better Mean ULP.
 
@@ -928,6 +930,11 @@ Key considerations:
 
 ### Reference Implementation
 
+**ULP Measurement Chain:**
+1. Calculate GELU(x) in float64 using erfc-based formula (below)
+2. Round result to nearest bf16
+3. Measure ULP distance between bf16 approximation and bf16 reference
+
 Ground truth uses float64 with `erfc()` for negative x to avoid catastrophic cancellation:
 
 ```cpp
@@ -1012,9 +1019,12 @@ All methods now achieve Max ULP ≤ 1547 (A1 Poly-7). **The top 8 methods achiev
 ## References
 
 - Hendrycks, D., & Gimpel, K. (2016). Gaussian Error Linear Units (GELUs). arXiv:1606.08415
-- BFloat16 specification (Google Brain, 2018)
-- Abramowitz, M., & Stegun, I. A. (1964). Handbook of Mathematical Functions
-- Remez algorithm for minimax polynomial fitting
+- Abramowitz, M., & Stegun, I. A. (1964). Handbook of Mathematical Functions, Section 7.1.26 (erf/erfc)
+- Schraudolph, N. N. (1999). A Fast, Compact Approximation of the Exponential Function. Neural Computation, 11(4), 853-862
+- Fritsch, F. N., & Carlson, R. E. (1980). Monotone Piecewise Cubic Interpolation. SIAM J. Numerical Analysis, 17(2), 238-246
+- NIST Digital Library of Mathematical Functions, Chapter 7: Error Functions and Mill's Ratio. https://dlmf.nist.gov/7
+- Higham, N. J. (2019). The Rise of bfloat16. SIAM News
+- PyTorch Documentation: torch.nn.functional.gelu
 
 ## License
 
