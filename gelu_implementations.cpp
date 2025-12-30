@@ -795,6 +795,34 @@ std::bfloat16_t gelu_r4_pure(std::bfloat16_t x_bf16) {
     return static_cast<std::bfloat16_t>(result);
 }
 
+/**
+ * @brief B1 Pure: Sigmoid-based GELU with asymptotic tail (no shared LUT)
+ *
+ * Uses the same sigmoid approximation as B1 but replaces the shared
+ * tail LUT with the independent asymptotic expansion for x < -3.
+ */
+std::bfloat16_t gelu_b1_pure(std::bfloat16_t x_bf16) {
+    float x = static_cast<float>(x_bf16);
+
+    if (x >= thresholds::POS) {
+        return static_cast<std::bfloat16_t>(x);
+    }
+
+    // For negative tail (x < -3), use asymptotic expansion instead of LUT
+    if (x < -3.0f) {
+        return static_cast<std::bfloat16_t>(gelu_asymptotic(x));
+    }
+
+    // σ(z) ≈ 0.5 + z / (2 * (1 + |z|)) where z = 1.702 * x
+    constexpr float k = 1.702f;
+    float z = k * x;
+    float abs_z = std::abs(z);
+    float sigma = 0.5f + z / (2.0f * (1.0f + abs_z));
+    float result = x * sigma;
+
+    return static_cast<std::bfloat16_t>(result);
+}
+
 // ============================================================================
 // R5: D1 - LUT WITH LINEAR INTERPOLATION
 // ============================================================================
@@ -948,7 +976,13 @@ std::bfloat16_t gelu_r5_pure(std::bfloat16_t x_bf16) {
 // FORWARD DECLARATIONS (for functions defined later in file)
 // ============================================================================
 
+// Helper function forward declarations
+inline float exp_softex(float x);
+
+// Method forward declarations
 std::bfloat16_t gelu_e4_hermite_blend(std::bfloat16_t x_bf16);
+std::bfloat16_t gelu_e4v2_wide_blend(std::bfloat16_t x_bf16);
+std::bfloat16_t gelu_e4v3_quintic_blend(std::bfloat16_t x_bf16);
 std::bfloat16_t gelu_e9_remez_bf16(std::bfloat16_t x_bf16);
 
 // ============================================================================
@@ -2300,6 +2334,36 @@ std::bfloat16_t gelu_h3_softex(std::bfloat16_t x_bf16) {
 
     float result = 0.5f * x * (1.0f + tanh_z);
 
+    return static_cast<std::bfloat16_t>(result);
+}
+
+/**
+ * @brief H3 Pure: SoftEx tanh-form with asymptotic tail (no shared LUT)
+ *
+ * Uses the same tanh-form as H3 but replaces the shared tail LUT
+ * with the independent asymptotic expansion for x < -3.
+ */
+std::bfloat16_t gelu_h3_pure(std::bfloat16_t x_bf16) {
+    float x = static_cast<float>(x_bf16);
+
+    if (x >= thresholds::POS) {
+        return static_cast<std::bfloat16_t>(x);
+    }
+
+    // For negative tail (x < -3), use asymptotic expansion instead of LUT
+    if (x < -3.0f) {
+        return static_cast<std::bfloat16_t>(gelu_asymptotic(x));
+    }
+
+    // GELU via tanh form: 0.5x(1 + tanh(√(2/π)(x + 0.044715x³)))
+    float x3 = x * x * x;
+    float z = static_cast<float>(constants::SQRT_2_OVER_PI) * (x + 0.044715f * x3);
+
+    // Compute tanh using SoftEx exp approximation
+    float exp_2z = exp_softex(2.0f * z);
+    float tanh_z = (exp_2z - 1.0f) / (exp_2z + 1.0f);
+
+    float result = 0.5f * x * (1.0f + tanh_z);
     return static_cast<std::bfloat16_t>(result);
 }
 
@@ -4188,6 +4252,143 @@ std::bfloat16_t gelu_e4_hermite_blend(std::bfloat16_t x_bf16) {
     return static_cast<std::bfloat16_t>(poly_result);
 }
 
+/**
+ * @brief Quintic smoothstep for C2 continuous blending
+ *
+ * smootherstep(t) = 6t⁵ - 15t⁴ + 10t³ for t ∈ [0, 1]
+ * Has zero first AND second derivatives at t=0 and t=1.
+ */
+inline float quintic_smoothstep(float t) {
+    t = std::max(0.0f, std::min(1.0f, t));
+    return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
+}
+
+/**
+ * @brief E4v2: Hermite blend with wider transition region [-5, -2]
+ *
+ * Extends the blending region to capture more of the transition zone.
+ */
+std::bfloat16_t gelu_e4v2_wide_blend(std::bfloat16_t x_bf16) {
+    float x = static_cast<float>(x_bf16);
+
+    if (x >= thresholds::POS) {
+        return static_cast<std::bfloat16_t>(x);
+    }
+
+    // Deep tail: pure asymptotic
+    if (x < -5.0f) {
+        return static_cast<std::bfloat16_t>(gelu_asymptotic(x));
+    }
+
+    // Compute B3-style erf polynomial result
+    constexpr float inv_sqrt_2 = 0.7071067811865475f;
+    float z = x * inv_sqrt_2;
+    float abs_z = std::abs(z);
+    float z2 = z * z;
+
+    float erf_z;
+    if (abs_z < 1.0f) {
+        constexpr float two_over_sqrt_pi = 1.1283791670955126f;
+        float z4 = z2 * z2;
+        float z6 = z4 * z2;
+        float series = 1.0f - 0.333333333f * z2 + 0.1f * z4 - 0.023809524f * z6;
+        erf_z = two_over_sqrt_pi * z * series;
+    } else {
+        constexpr float a1 = 0.278393f;
+        constexpr float a2 = 0.230389f;
+        constexpr float a3 = 0.000972f;
+        constexpr float a4 = 0.078108f;
+
+        float t = abs_z;
+        float t2 = t * t;
+        float t3 = t2 * t;
+        float t4 = t2 * t2;
+        float p = a1 * t + a2 * t2 + a3 * t3 + a4 * t4;
+        float denom = 1.0f + p;
+        float denom2 = denom * denom;
+        float denom4 = denom2 * denom2;
+        float erf_abs = 1.0f - 1.0f / denom4;
+        erf_z = (z >= 0) ? erf_abs : -erf_abs;
+    }
+
+    float phi = 0.5f * (1.0f + erf_z);
+    float poly_result = x * phi;
+
+    // Wider transition region [-5, -2]: Hermite blend
+    if (x < -2.0f) {
+        float asymp_result = gelu_asymptotic(x);
+        // t = 0 at x=-5 (pure asymptotic), t = 1 at x=-2 (pure polynomial)
+        float t = (x + 5.0f) / 3.0f;  // x in [-5, -2] → t in [0, 1]
+        float blend = hermite_smoothstep(t);
+        float result = asymp_result * (1.0f - blend) + poly_result * blend;
+        return static_cast<std::bfloat16_t>(result);
+    }
+
+    return static_cast<std::bfloat16_t>(poly_result);
+}
+
+/**
+ * @brief E4v3: Quintic smoothstep blend (C2 continuous)
+ *
+ * Uses quintic (degree-5) smoothstep for smoother C2 continuous transition.
+ */
+std::bfloat16_t gelu_e4v3_quintic_blend(std::bfloat16_t x_bf16) {
+    float x = static_cast<float>(x_bf16);
+
+    if (x >= thresholds::POS) {
+        return static_cast<std::bfloat16_t>(x);
+    }
+
+    if (x < -4.0f) {
+        return static_cast<std::bfloat16_t>(gelu_asymptotic(x));
+    }
+
+    // Compute B3-style erf polynomial result
+    constexpr float inv_sqrt_2 = 0.7071067811865475f;
+    float z = x * inv_sqrt_2;
+    float abs_z = std::abs(z);
+    float z2 = z * z;
+
+    float erf_z;
+    if (abs_z < 1.0f) {
+        constexpr float two_over_sqrt_pi = 1.1283791670955126f;
+        float z4 = z2 * z2;
+        float z6 = z4 * z2;
+        float series = 1.0f - 0.333333333f * z2 + 0.1f * z4 - 0.023809524f * z6;
+        erf_z = two_over_sqrt_pi * z * series;
+    } else {
+        constexpr float a1 = 0.278393f;
+        constexpr float a2 = 0.230389f;
+        constexpr float a3 = 0.000972f;
+        constexpr float a4 = 0.078108f;
+
+        float t = abs_z;
+        float t2 = t * t;
+        float t3 = t2 * t;
+        float t4 = t2 * t2;
+        float p = a1 * t + a2 * t2 + a3 * t3 + a4 * t4;
+        float denom = 1.0f + p;
+        float denom2 = denom * denom;
+        float denom4 = denom2 * denom2;
+        float erf_abs = 1.0f - 1.0f / denom4;
+        erf_z = (z >= 0) ? erf_abs : -erf_abs;
+    }
+
+    float phi = 0.5f * (1.0f + erf_z);
+    float poly_result = x * phi;
+
+    // Transition region [-4, -3]: Quintic blend (C2 continuous)
+    if (x < -3.0f) {
+        float asymp_result = gelu_asymptotic(x);
+        float t = (x + 4.0f);  // x in [-4, -3] → t in [0, 1]
+        float blend = quintic_smoothstep(t);
+        float result = asymp_result * (1.0f - blend) + poly_result * blend;
+        return static_cast<std::bfloat16_t>(result);
+    }
+
+    return static_cast<std::bfloat16_t>(poly_result);
+}
+
 // ============================================================================
 // E9: REMEZ QUANTIZATION-AWARE COEFFICIENTS
 // ============================================================================
@@ -4874,6 +5075,7 @@ int main(int argc, char* argv[]) {
             // Category B: Sub-function approximations
             {"B1: Sigmoid-based GELU", gelu_b1_sigmoid},
             {"B1v2: Sigmoid (sqrt)", gelu_b1_sigmoid_v2},
+            {"B1 Pure: Sigmoid + Asymptotic", gelu_b1_pure},
             {"B3: Erf Polynomial (A-S)", gelu_b3_erf_poly},
             {"B3 Pure: Erf (no LUT)", gelu_b3_pure},
             {"B4: Rational Erf (range red)", gelu_b4_rational_erf},
@@ -4897,6 +5099,8 @@ int main(int argc, char* argv[]) {
             // Category E: Engineering variants
             {"E3: Range-Scaled Approx", gelu_e3_range_scaled},
             {"E4: Hermite Transition Blend", gelu_e4_hermite_blend},
+            {"E4v2: Wide Hermite [-5,-2]", gelu_e4v2_wide_blend},
+            {"E4v3: Quintic Blend", gelu_e4v3_quintic_blend},
             {"E9: Remez BF16-Quantized", gelu_e9_remez_bf16},
             // Category F: Reference methods (arithmetic-only)
             {"F2: Numerical Quadrature", gelu_f2_quadrature},
@@ -4905,6 +5109,7 @@ int main(int argc, char* argv[]) {
             // Category H: Advanced
             {"H2: GELU-Softmax Unit", gelu_h2_softmax_unit},
             {"H3: SoftEx Tanh", gelu_h3_softex},
+            {"H3 Pure: SoftEx + Asymptotic", gelu_h3_pure},
             // Category TT: Tenstorrent Hardware Reference (DO NOT MODIFY)
             {"TT Accurate: Chebyshev-15", gelu_tt_accurate},
             {"TT Fast: 6-Piece PWL", gelu_tt_fast},
