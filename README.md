@@ -8,9 +8,9 @@ This project implements and evaluates multiple GELU approximation strategies opt
 
 ### Key Achievements
 
-**9 methods achieve Max ULP ≤ 88** with R5 Pure and B3 Pure tied at Max ULP = 33 (R5 Pure has better Mean ULP: 0.003 vs 0.01). Deep tail accuracy achieved via asymptotic expansion `GELU(x) ≈ -φ(x)·(1 - 1/x² + 3/x⁴ - 15/x⁶)` and erfc-based reference to avoid catastrophic cancellation.
+**12 methods achieve Max ULP ≤ 88** with 5 Pure methods at Max ULP ≤ 35. R5 Pure achieves best overall performance (Max ULP = 33, Mean ULP = 0.003). Deep tail accuracy achieved via asymptotic expansion `GELU(x) ≈ -φ(x)·(1 - 1/x² + 3/x⁴ - 15/x⁶)` and erfc-based reference to avoid catastrophic cancellation.
 
-### Complete Results Table (All 27 Methods)
+### Complete Results Table (All 30 Methods)
 
 Sorted by Max ULP. Region definitions: **nz** = near_zero (|x| < 0.5), **cp** = core_pos (0.5 ≤ x < 3), **cn** = core_neg (-3 ≤ x < -0.5), **tn** = tail_neg (x < -3).
 
@@ -20,6 +20,9 @@ Sorted by Max ULP. Region definitions: **nz** = near_zero (|x| < 0.5), **cp** = 
 |--------|--------|-----|-----------|--------|-----------|--------|-----------|--------|-----------|--------|
 | **R5 Pure** | ***0.003*** | **33** | *0.00* | 1 | *0.00* | 0 | *0.03* | 1 | *0.01* | 33 |
 | **B3 Pure** | ***0.01*** | **33** | *0.00* | 0 | *0.04* | 1 | *2.03* | 23 | *0.01* | 33 |
+| **D2 Pure** | ***0.01*** | **33** | *0.00* | 0 | *0.04* | 1 | *2.03* | 23 | *0.01* | 33 |
+| **F3 Pure** | ***0.02*** | **33** | *0.00* | 0 | *0.40* | 3 | *3.90* | 23 | *0.02* | 33 |
+| **C1 Pure** | ***0.03*** | **35** | *0.00* | 1 | *0.07* | 1 | *4.09* | 12 | *0.03* | 35 |
 | R5 LUT | *0.07* | 87 | *0.00* | 1 | *0.00* | 0 | *0.03* | 1 | *0.29* | 87 |
 | B3 Erf Poly | *0.11* | 87 | *0.00* | 0 | *0.04* | 1 | *2.03* | 23 | *0.40* | 87 |
 | C1 Spline | *0.10* | 87 | *0.00* | 1 | *0.07* | 1 | *4.09* | 12 | *0.31* | 87 |
@@ -52,10 +55,11 @@ Sorted by Max ULP. Region definitions: **nz** = near_zero (|x| < 0.5), **cp** = 
 
 1. **tail_pos is trivial**: All methods achieve 0 ULP (saturation x ≥ 3 → GELU(x) = x)
 2. **core_neg is the bottleneck**: Most high-ULP methods fail at x ≈ -3.5 (TAIL_START boundary)
-3. **R5 Pure and B3 Pure tie at Max ULP 33**: Both use asymptotic expansion for deep tail; R5 Pure has better Mean ULP (0.003 vs 0.01)
-4. **LUT-based methods plateau at 87**: Limited by tail LUT interpolation error at x ≈ -7.65 (R5 Pure avoids this via asymptotic tail)
+3. **Five Pure methods achieve Max ULP ≤ 35**: R5 Pure (33, Mean 0.003), B3 Pure (33, Mean 0.01), D2 Pure (33, Mean 0.01), F3 Pure (33, Mean 0.02), C1 Pure (35, Mean 0.03)
+4. **Pure methods eliminate shared tail dependency**: All Pure methods use independent asymptotic expansion for deep tail, achieving Max ULP = 33-35 vs 87 for shared-tail versions
+5. **LUT-based methods plateau at 87**: Shared tail LUT limited by interpolation error at x ≈ -7.65; Pure versions avoid this via asymptotic tail
 
-27 methods implemented: 25 research methods across 8 categories from FinalLists.md taxonomy, plus 2 Tenstorrent hardware reference benchmarks.
+30 methods implemented: 28 research methods (23 original + 5 Pure variants) across 8 categories from FinalLists.md taxonomy, plus 2 Tenstorrent hardware reference benchmarks.
 
 ## Background
 
@@ -370,6 +374,22 @@ GELU(x) ≈ x · (0.5 + x/√(2π)) = 0.5x + 0.3989x²
 
 ---
 
+#### C1 Pure: Cubic Hermite Spline with Asymptotic Tail ⭐
+
+**Mathematical basis**: Same as C1 but with independent asymptotic tail handling.
+
+**Difference from C1**: Replaces shared tail LUT with direct asymptotic expansion for x < -3.5:
+```
+GELU(x) ≈ -φ(x) · (1 - 1/x² + 3/x⁴ - 15/x⁶)
+where φ(x) = exp(-x²/2) / √(2π)
+```
+
+**Why Pure**: Eliminates shared implementation dependency, achieving methodological independence. The asymptotic expansion avoids LUT interpolation error that limits original C1 to Max ULP = 87.
+
+**Result**: Mean ULP 0.03, Max ULP 35 (improved from 87).
+
+---
+
 #### R4: Tanh-Form GELU with Rational Tanh
 
 **Mathematical basis**: Hendrycks & Gimpel's tanh approximation of GELU.
@@ -458,6 +478,22 @@ F3 - CF for erf(z) (Lentz algorithm):
 **Convergence**: CF converges in the cut plane, complementing power series which converge in disks. For erf, CF is effective for |z| > 0.5.
 
 **Result**: A4 Mean 1.71, Max 1206; F3 Mean 0.12, Max 87.
+
+---
+
+#### F3 Pure: Continued Fraction Erf with Asymptotic Tail ⭐
+
+**Mathematical basis**: Same CF-based erf as F3 but with independent asymptotic tail.
+
+**Difference from F3**: Replaces shared tail LUT/fallback with direct asymptotic expansion for x < -2.0:
+```
+GELU(x) ≈ -φ(x) · (1 - 1/x² + 3/x⁴ - 15/x⁶)
+where φ(x) = exp(-x²/2) / √(2π)
+```
+
+**Why Pure**: The continued fraction approach is mathematically elegant and deserves independent implementation. F3 Pure eliminates reliance on B3-style erf fallback, maintaining pure CF methodology throughout.
+
+**Result**: Mean ULP 0.02, Max ULP 33 (improved from 87).
 
 ---
 
@@ -675,6 +711,22 @@ Region handling:
 **Rationale**: The B3 erf approximation is accurate in core but fails in deep tail. LUT is accurate but memory-expensive. Combine strengths of both.
 
 **Result**: Mean ULP 0.11, Max ULP 87.
+
+---
+
+#### D2 Pure: Hybrid LUT+Erf with Asymptotic Tail ⭐
+
+**Mathematical basis**: Same hybrid approach as D2 but with independent asymptotic tail.
+
+**Difference from D2**: Replaces shared tail LUT with direct asymptotic expansion for x < -3.0:
+```
+GELU(x) ≈ -φ(x) · (1 - 1/x² + 3/x⁴ - 15/x⁶)
+where φ(x) = exp(-x²/2) / √(2π)
+```
+
+**Why Pure**: The original D2 hybrid strategy (LUT for tail, erf for core) is sound, but shared tail LUT creates implementation dependency. D2 Pure maintains the hybrid philosophy while achieving complete methodological independence.
+
+**Result**: Mean ULP 0.01, Max ULP 33 (improved from 87).
 
 ---
 
