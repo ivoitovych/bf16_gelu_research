@@ -131,7 +131,7 @@ Results are **identical** across different GCC versions and platforms:
 | WSL (Ubuntu 24.04) | GCC 13.3.0 | ✓ Verified |
 | MinGW-w64 (MSYS2 UCRT64) | GCC 15.2.0 | ✓ Verified |
 
-All 26 methods produce byte-for-byte identical ULP analysis output on both platforms (after normalizing line endings). This confirms:
+All 30 methods produce byte-for-byte identical ULP analysis output on both platforms (after normalizing line endings). This confirms:
 - No compiler-specific floating-point behavior differences
 - Consistent `std::bfloat16_t` implementation across GCC versions
 - Deterministic results for reproducible research
@@ -143,7 +143,7 @@ All 26 methods produce byte-for-byte identical ULP analysis output on both platf
 ### Running Analysis
 
 ```bash
-# Full ULP analysis over entire bfloat16 range (24 methods)
+# Full ULP analysis over entire bfloat16 range (30 methods)
 ./gelu_analysis --analyze
 
 # Diagnostic mode with specific test points
@@ -904,7 +904,7 @@ After implementing asymptotic expansion for the deep tail, **B3 Pure achieves Ma
 | near_zero | 0 (B3 Pure) | Taylor series is exact near zero |
 | core_pos | 0 (R5) | LUT interpolation is accurate |
 | core_neg | 1 (R5) | LUT interpolation is accurate |
-| tail_pos | 0 (all) | Saturation x → x is exact |
+| tail_pos | 0 (all) | Saturation bf16-rounding exact |
 | tail_neg | 33 (B3 Pure) | Asymptotic expansion matches reference |
 
 **Remaining error sources:**
@@ -983,7 +983,7 @@ Based on FinalLists.md, the project follows a phased implementation approach:
 
 ### All Methods Fixed
 
-All methods now achieve Max ULP ≤ 1547 (A1 Poly-7). **The top 8 methods achieve Max ULP ≤ 88**, with B3 Pure leading at Max ULP = 33.
+All methods now achieve Max ULP ≤ 1547 (A1 Poly-7). **The top 12 methods achieve Max ULP ≤ 88**, with R5 Pure and B3 Pure tied at Max ULP = 33.
 
 **Key fixes applied:**
 - **Reference function**: Use `erfc(-z)` for negative x to avoid catastrophic cancellation in `1 + erf(z)`
