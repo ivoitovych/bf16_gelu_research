@@ -21,7 +21,7 @@ Sorted by Max ULP. Region definitions: **nz** = near_zero (|x| < 0.5), **cp** = 
 | **R5 Pure** | ***0.002*** | **2** | *0.00* | 1 | *0.00* | 0 | *0.03* | 1 | *0.00* | 2 |
 | **B3 Pure** | ***0.01*** | **23** | *0.00* | 0 | *0.04* | 1 | *2.03* | 23 | *0.00* | 2 |
 | **D2 Pure** | ***0.01*** | **23** | *0.00* | 0 | *0.04* | 1 | *2.03* | 23 | *0.00* | 2 |
-| **F3 Pure** | ***0.02*** | **28** | *0.00* | 0 | *0.40* | 3 | *3.90* | 23 | *0.01* | 28 |
+| **F3 Pure** | ***0.02*** | **28** | *0.00* | 0 | *0.40* | 3 | *4.16* | 28 | *0.00* | 2 |
 | **R4 Pure** | ***0.01*** | **29** | *0.00* | 1 | *0.03* | 1 | *1.75* | 29 | *0.00* | 2 |
 | **C1 Pure** | ***0.03*** | **35** | *0.00* | 1 | *0.07* | 1 | *4.09* | 12 | *0.03* | 35 |
 | E4 Hermite | *0.05* | 58 | *0.00* | 0 | *0.04* | 1 | *2.03* | 23 | *0.14* | 58 |
@@ -63,7 +63,7 @@ Sorted by Max ULP. Region definitions: **nz** = near_zero (|x| < 0.5), **cp** = 
 
 1. **tail_pos is trivial**: All methods achieve 0 ULP (exact saturation at x ≥ 2.78125, implementations use x ≥ 3)
 2. **core_neg is the bottleneck**: Most high-ULP methods fail at x ≈ -3.5 (TAIL_START boundary)
-3. **Six Pure methods achieve Max ULP ≤ 35**: R5 Pure (**2**, Mean 0.002), B3 Pure (23, Mean 0.01), D2 Pure (23, Mean 0.01), R4 Pure (29, Mean 0.01), F3 Pure (28, Mean 0.02), C1 Pure (35, Mean 0.03)
+3. **Six Pure methods achieve Max ULP ≤ 35**: R5 Pure (**2**, Mean 0.002), B3 Pure (23, Mean 0.01), D2 Pure (23, Mean 0.01), F3 Pure (28, Mean 0.02), R4 Pure (29, Mean 0.01), C1 Pure (35, Mean 0.03)
 4. **Pure methods eliminate shared tail dependency**: All Pure methods use independent asymptotic expansion for deep tail, achieving Max ULP = 2-35 vs 87 for shared-tail versions
 5. **LUT-based methods plateau at 87**: Shared tail LUT limited by interpolation error at x ≈ -7.65; Pure versions avoid this via asymptotic tail
 6. **E4 Hermite blending achieves Max ULP 58**: Smooth transition between polynomial core and asymptotic tail reduces discontinuity error
