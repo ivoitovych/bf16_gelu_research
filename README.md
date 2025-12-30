@@ -8,7 +8,7 @@ This project implements and evaluates multiple GELU approximation strategies opt
 
 ### Key Achievements
 
-**16 methods achieve Max ULP ≤ 88** with 6 Pure methods at Max ULP ≤ 35. R5 Pure achieves best overall performance (Max ULP = 33, Mean ULP = 0.003). Deep tail accuracy achieved via asymptotic expansion `GELU(x) ≈ -φ(x)·(1 - 1/x² + 3/x⁴ - 15/x⁶)` and erfc-based reference to avoid catastrophic cancellation.
+**16 methods achieve Max ULP ≤ 88** with 6 Pure methods at Max ULP ≤ 35. **R5 Pure achieves Max ULP = 2** (best overall, Mean ULP = 0.002) after fixing subnormal handling in exp approximation. Deep tail accuracy achieved via asymptotic expansion `GELU(x) ≈ -φ(x)·(1 - 1/x² + 3/x⁴ - 15/x⁶)` and erfc-based reference to avoid catastrophic cancellation.
 
 ### Complete Results Table (All 38 Methods)
 
@@ -18,12 +18,12 @@ Sorted by Max ULP. Region definitions: **nz** = near_zero (|x| < 0.5), **cp** = 
 
 | Method | *Mean* | Max | *nz Mean* | nz Max | *cp Mean* | cp Max | *cn Mean* | cn Max | *tn Mean* | tn Max |
 |--------|--------|-----|-----------|--------|-----------|--------|-----------|--------|-----------|--------|
-| **R5 Pure** | ***0.003*** | **33** | *0.00* | 1 | *0.00* | 0 | *0.03* | 1 | *0.01* | 33 |
-| **B3 Pure** | ***0.01*** | **33** | *0.00* | 0 | *0.04* | 1 | *2.03* | 23 | *0.01* | 33 |
-| **D2 Pure** | ***0.01*** | **33** | *0.00* | 0 | *0.04* | 1 | *2.03* | 23 | *0.01* | 33 |
-| **F3 Pure** | ***0.02*** | **33** | *0.00* | 0 | *0.40* | 3 | *3.90* | 23 | *0.02* | 33 |
+| **R5 Pure** | ***0.002*** | **2** | *0.00* | 1 | *0.00* | 0 | *0.03* | 1 | *0.00* | 2 |
+| **B3 Pure** | ***0.01*** | **23** | *0.00* | 0 | *0.04* | 1 | *2.03* | 23 | *0.00* | 2 |
+| **D2 Pure** | ***0.01*** | **23** | *0.00* | 0 | *0.04* | 1 | *2.03* | 23 | *0.00* | 2 |
+| **F3 Pure** | ***0.02*** | **28** | *0.00* | 0 | *0.40* | 3 | *3.90* | 23 | *0.01* | 28 |
+| **R4 Pure** | ***0.01*** | **29** | *0.00* | 1 | *0.03* | 1 | *1.75* | 29 | *0.00* | 2 |
 | **C1 Pure** | ***0.03*** | **35** | *0.00* | 1 | *0.07* | 1 | *4.09* | 12 | *0.03* | 35 |
-| **R4 Pure** | ***0.01*** | **33** | *0.00* | 1 | *0.03* | 1 | *1.75* | 29 | *0.01* | 33 |
 | E4 Hermite | *0.05* | 58 | *0.00* | 0 | *0.04* | 1 | *2.03* | 23 | *0.14* | 58 |
 | E4v3 Quintic | *0.04* | 61 | *0.00* | 0 | *0.04* | 1 | *2.03* | 23 | *0.13* | 61 |
 | E4v2 Wide | *0.08* | 81 | *0.00* | 0 | *0.04* | 1 | *1.72* | 17 | *0.30* | 81 |
@@ -37,10 +37,10 @@ Sorted by Max ULP. Region definitions: **nz** = near_zero (|x| < 0.5), **cp** = 
 | R4 Tanh | *0.11* | 166 | *0.00* | 1 | *0.03* | 1 | *1.75* | 29 | *0.42* | 166 |
 | B4 Rational | *0.56* | 535 | *0.00* | 1 | *2.07* | 5 | *54.32* | 314 | *1.13* | 535 |
 | B1v2 Sigmoid | *1.47* | 625 | *0.93* | 106 | *13.91* | 40 | *129.44* | 352 | *1.25* | 625 |
-| B1 Pure | *1.12* | 759 | *0.50* | 35 | *10.81* | 24 | *166.64* | 759 | *0.01* | 33 |
+| B1 Pure | *1.12* | 759 | *0.50* | 35 | *10.81* | 24 | *166.64* | 759 | *0.00* | 2 |
 | D3 LUT+Corr | *1.82* | 830 | *0.82* | 94 | *23.27* | 53 | *185.06* | 440 | *1.55* | 830 |
 | R3 PWL | *36.82* | 832 | *72.59* | 98 | *1.50* | 6 | *112.68* | 518 | *1.58* | 832 |
-| H3 Pure | *0.67* | 861 | *0.00* | 1 | *4.96* | 28 | *130.29* | 861 | *0.01* | 33 |
+| H3 Pure | *0.67* | 861 | *0.00* | 1 | *4.96* | 28 | *130.29* | 861 | *0.00* | 2 |
 | C2 Piecewise | *1.15* | 881 | *0.00* | 1 | *4.35* | 27 | *135.89* | 881 | *1.86* | 870 |
 | B1 Sigmoid | *1.64* | 1068 | *0.50* | 35 | *10.81* | 24 | *166.64* | 759 | *2.10* | 1068 |
 | E3 Range-Scale | *1.72* | 1130 | *0.07* | 21 | *5.98* | 15 | *225.87* | 822 | *2.22* | 1130 |
@@ -48,8 +48,8 @@ Sorted by Max ULP. Region definitions: **nz** = near_zero (|x| < 0.5), **cp** = 
 | R2 Rational | *1.19* | 1139 | *0.00* | 1 | *5.02* | 17 | *126.52* | 775 | *2.18* | 1139 |
 | A4 Cont.Frac | *1.71* | 1206 | *0.02* | 7 | *18.07* | 36 | *208.65* | 866 | *2.34* | 1206 |
 | A3 Chebyshev | *2.54* | 1207 | *0.57* | 62 | *47.73* | 65 | *292.26* | 900 | *2.37* | 1207 |
-| A1 Pure | *2.83* | 1211 | *0.88* | 122 | *10.87* | 29 | *475.34* | 1211 | *0.01* | 33 |
-| E9 Remez BF16 | *2.83* | 1211 | *0.88* | 122 | *10.80* | 28 | *476.64* | 1211 | *0.01* | 33 |
+| A1 Pure | *2.83* | 1211 | *0.88* | 122 | *10.87* | 29 | *475.34* | 1211 | *0.00* | 2 |
+| E9 Remez BF16 | *2.83* | 1211 | *0.88* | 122 | *10.80* | 28 | *476.64* | 1211 | *0.00* | 2 |
 | H3 SoftEx | *1.26* | 1247 | *0.00* | 1 | *4.96* | 28 | *130.29* | 861 | *2.38* | 1247 |
 | R1 Poly-9 | *1.40* | 1312 | *0.00* | 1 | *7.38* | 40 | *150.88* | 926 | *2.50* | 1312 |
 | A1 Poly-9 | *3.56* | 1404 | *0.88* | 122 | *10.87* | 29 | *475.34* | 1211 | *2.94* | 1404 |
@@ -63,8 +63,8 @@ Sorted by Max ULP. Region definitions: **nz** = near_zero (|x| < 0.5), **cp** = 
 
 1. **tail_pos is trivial**: All methods achieve 0 ULP (exact saturation at x ≥ 2.78125, implementations use x ≥ 3)
 2. **core_neg is the bottleneck**: Most high-ULP methods fail at x ≈ -3.5 (TAIL_START boundary)
-3. **Six Pure methods achieve Max ULP ≤ 35**: R5 Pure (33, Mean 0.003), B3 Pure (33, Mean 0.01), D2 Pure (33, Mean 0.01), R4 Pure (33, Mean 0.01), F3 Pure (33, Mean 0.02), C1 Pure (35, Mean 0.03)
-4. **Pure methods eliminate shared tail dependency**: All Pure methods use independent asymptotic expansion for deep tail, achieving Max ULP = 33-35 vs 87 for shared-tail versions
+3. **Six Pure methods achieve Max ULP ≤ 35**: R5 Pure (**2**, Mean 0.002), B3 Pure (23, Mean 0.01), D2 Pure (23, Mean 0.01), R4 Pure (29, Mean 0.01), F3 Pure (28, Mean 0.02), C1 Pure (35, Mean 0.03)
+4. **Pure methods eliminate shared tail dependency**: All Pure methods use independent asymptotic expansion for deep tail, achieving Max ULP = 2-35 vs 87 for shared-tail versions
 5. **LUT-based methods plateau at 87**: Shared tail LUT limited by interpolation error at x ≈ -7.65; Pure versions avoid this via asymptotic tail
 6. **E4 Hermite blending achieves Max ULP 58**: Smooth transition between polynomial core and asymptotic tail reduces discontinuity error
 
