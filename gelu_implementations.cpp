@@ -2848,7 +2848,7 @@ struct UlpStats {
  * @brief Run ULP analysis on a GELU implementation over entire bfloat16 range
  */
 UlpStats analyze_gelu_implementation(
-    const std::string& name,
+    [[maybe_unused]] const std::string& name,
     std::function<std::bfloat16_t(std::bfloat16_t)> gelu_fn,
     const UlpCalculator& ulp_calc
 ) {
@@ -3744,7 +3744,7 @@ std::bfloat16_t gelu_e3_range_scaled(std::bfloat16_t x_bf16) {
         // B3-style piecewise erf: Abramowitz-Stegun rational (works for all x < 0)
         float abs_x = -x;
         float t = 1.0f / (1.0f + 0.3275911f * (abs_x / 1.4142135f));
-        float t2 = t * t, t3 = t2 * t, t4 = t3 * t, t5 = t4 * t;
+        float t2 = t * t, t3 = t2 * t, t4 = t3 * t;
         float erf_neg = 1.0f - t * (0.254829592f - 0.284496736f * t + 1.421413741f * t2
                                     - 1.453152027f * t3 + 1.061405429f * t4);
         float phi = 0.5f * (1.0f - erf_neg);
@@ -3824,7 +3824,7 @@ void analyze_range_scaling(const UlpCalculator& ulp_calc) {
 /**
  * @brief E5/E8: Analyze denormal and flush-to-zero behavior
  */
-void analyze_denormal_ftz_policy(const UlpCalculator& ulp_calc) {
+void analyze_denormal_ftz_policy([[maybe_unused]] const UlpCalculator& ulp_calc) {
     std::cout << "\n================================================================" << std::endl;
     std::cout << "         E5/E8: DENORMAL & FTZ POLICY ANALYSIS                  " << std::endl;
     std::cout << "================================================================" << std::endl;
@@ -3859,7 +3859,6 @@ void analyze_denormal_ftz_policy(const UlpCalculator& ulp_calc) {
     std::cout << "\nFlush-to-Zero (FTZ) Analysis:" << std::endl;
 
     int denormal_count = 0;
-    int ftz_count = 0;
 
     for (uint16_t bits = 0x0001; bits < 0x0080; ++bits) {  // Subnormal positive range
         std::bfloat16_t val = bits_to_bfloat16(bits);
@@ -4072,7 +4071,7 @@ std::bfloat16_t gelu_h2_softmax_unit(std::bfloat16_t x_bf16) {
     if (x < -2.0f) {
         // B3-style piecewise erf: Abramowitz-Stegun rational
         float t = 1.0f / (1.0f + 0.3275911f * (-x / 1.4142135f));
-        float t2 = t * t, t3 = t2 * t, t4 = t3 * t, t5 = t4 * t;
+        float t2 = t * t, t3 = t2 * t, t4 = t3 * t;
         float erf_neg = 1.0f - t * (0.254829592f - 0.284496736f * t + 1.421413741f * t2
                                     - 1.453152027f * t3 + 1.061405429f * t4);
         float phi = 0.5f * (1.0f - erf_neg);
