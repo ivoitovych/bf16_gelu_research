@@ -13,7 +13,7 @@ Systematic ULP error analysis of GELU approximations for bfloat16 arithmetic. Se
 
 # Build and run
 g++ -std=c++23 -O3 -march=native -o gelu_analysis gelu_implementations.cpp -lm
-./gelu_analysis --analyze      # Full ULP analysis (30 methods)
+./gelu_analysis --analyze      # Full ULP analysis (34 methods)
 ./gelu_analysis --all          # All analysis modes
 
 # Other modes: --diagnose, --reference, --saturation, --calibrate,
@@ -31,7 +31,7 @@ g++ -std=c++23 -O3 -march=native -o gelu_analysis gelu_implementations.cpp -lm
 | `debug_tools.cpp` | Exploratory debugging tools |
 | `FinalLists.md` | Strategy taxonomy (40 methods, 8 categories) |
 | `README.md` | Full documentation and results |
-| `HISTORY.md` | Development history (16 sessions) |
+| `HISTORY.md` | Development history (17 sessions) |
 | `CLAUDE.md` | This file - project instructions |
 
 ## Constraints
@@ -44,7 +44,7 @@ g++ -std=c++23 -O3 -march=native -o gelu_analysis gelu_implementations.cpp -lm
 
 ## Current Status
 
-**30 methods implemented. 5 Pure methods achieve Max ULP ≤ 35, with R5 Pure leading (Max 33, Mean 0.003).**
+**34 methods implemented. 6 Pure methods achieve Max ULP ≤ 35, with R5 Pure leading (Max 33, Mean 0.003).**
 
 See [README.md](README.md) for complete results table with per-region analysis.
 
@@ -55,8 +55,10 @@ See [README.md](README.md) for complete results table with per-region analysis.
 | **R5 Pure** | **33** | **0.003** | LUT core + asymptotic tail (best overall) |
 | **B3 Pure** | **33** | 0.01 | Pure arithmetic, asymptotic expansion |
 | **D2 Pure** | **33** | 0.01 | Hybrid LUT+erf + asymptotic tail |
+| **R4 Pure** | **33** | 0.01 | Tanh-form + asymptotic tail |
 | **F3 Pure** | **33** | 0.02 | Continued fraction + asymptotic tail |
 | **C1 Pure** | **35** | 0.03 | Cubic spline + asymptotic tail |
+| E4 Hermite | 58 | 0.05 | Hermite blending at transition |
 | R5/C1/B3/D2/F2/F3 | 87 | — | Limited by shared tail LUT interpolation |
 
 ### Tenstorrent Hardware Reference Benchmarks
@@ -121,3 +123,4 @@ See [HISTORY.md](HISTORY.md) for detailed session-by-session development notes c
 - Session 14: ULP measurement sanity check framework (--sanity flag)
 - Session 15: R5 Pure - LUT with asymptotic tail (ties B3 Pure at Max ULP 33, best Mean ULP 0.003)
 - Session 16: C1/D2/F3 Pure variants (5 Pure methods total, all Max ULP ≤ 35)
+- Session 17: A1 Pure, R4 Pure, E4 Hermite blend, E9 Remez BF16 (6 Pure methods, 34 total)
