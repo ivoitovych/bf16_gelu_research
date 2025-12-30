@@ -248,9 +248,12 @@ All implementations avoid standard library transcendental function calls:
 - **Allowed**: `+`, `-`, `*`, `/`, `|x|`, `sign()`, comparison, bit manipulation, polynomial evaluation
 - **Prohibited**: `std::erf()`, `std::tanh()`, `std::exp()`, `std::log()` (except in reference implementation)
 
-**Arithmetic-Only Policy Clarification**: The "Pure" methods use `fast_exp_neg()` for the asymptotic tail, which computes `exp(-u)` via IEEE754 bit manipulation and polynomial refinement—not via `std::exp()`. This technique maps efficiently to hardware multipliers and integer ALUs, avoiding expensive SFPU transcendental operations. See: Schraudolph, N.N. (1999) "A Fast, Compact Approximation of the Exponential Function" Neural Computation 11(4), 853-862.
+**Arithmetic-Only Policy Clarification**: The mathematical definition of GELU uses `erf()` and the asymptotic expansion uses `exp()`. Our **implementations** approximate these using only allowed operations:
 
-> **Note**: Throughout this document, mathematical formulas showing `exp()` or `φ(x) = exp(-x²/2)/√(2π)` refer to the **bit-manipulation approximation**, not library calls. The implementation uses `exp(-u) ≈ 2^(-u/ln2)` computed via IEEE754 exponent manipulation.
+- `exp(-u)` is computed via `fast_exp_neg()`: IEEE754 bit manipulation + polynomial refinement (Schraudolph 1999)
+- `erf(z)` is approximated via rational polynomials (Abramowitz-Stegun 7.1.26)
+
+This maps efficiently to hardware multipliers and integer ALUs, avoiding SFPU transcendental calls.
 
 ### Mathematical Foundation
 
