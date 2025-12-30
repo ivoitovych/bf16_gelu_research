@@ -242,8 +242,10 @@ Worst input: -13.2500 (0xc154)
 
 ### Approximation Constraints
 
+**Hardware Motivation**: These constraints target **Tenstorrent Wormhole/Blackhole ML accelerators**, where the tensor core (FPU/Tensix) supports only basic arithmetic operations. Transcendental functions like `exp()`, `erf()`, and `tanh()` require the slower SFPU (Special Function Processing Unit) or must be approximated using basic ops. Efficient GELU implementation must avoid SFPU calls entirely.
+
 All implementations avoid standard library transcendental function calls:
-- **Allowed**: `+`, `-`, `*`, `/`, `|x|`, `sign()`, bit manipulation, polynomial evaluation
+- **Allowed**: `+`, `-`, `*`, `/`, `|x|`, `sign()`, comparison, bit manipulation, polynomial evaluation
 - **Prohibited**: `std::erf()`, `std::tanh()`, `std::exp()`, `std::log()` (except in reference implementation)
 
 **Arithmetic-Only Policy Clarification**: The "Pure" methods use `fast_exp_neg()` for the asymptotic tail, which computes `exp(-u)` via IEEE754 bit manipulation and polynomial refinement—not via `std::exp()`. This technique maps efficiently to hardware multipliers and integer ALUs, avoiding expensive SFPU transcendental operations. See: Schraudolph, N.N. (1999) "A Fast, Compact Approximation of the Exponential Function" Neural Computation 11(4), 853-862.
