@@ -14,7 +14,7 @@ This project implements and evaluates multiple GELU approximation strategies opt
 
 Sorted by Max ULP. Region definitions: **nz** = near_zero (|x| < 0.5), **cp** = core_pos (0.5 ≤ x < 3), **cn** = core_neg (-3 ≤ x < -0.5), **tn** = tail_neg (x < -3).
 
-> **Note**: The tail_pos region (x ≥ 3) achieves **exactly 0 ULP for all methods** because for bf16 precision, GELU(x) = x·Φ(x) becomes indistinguishable from x when Φ(x) rounds to 1.0. The saturation `GELU(x) = x` is bf16-rounding exact beyond this threshold.
+> **Note**: The tail_pos region achieves **exactly 0 ULP for all methods** because for bf16 precision, GELU(x) = x·Φ(x) becomes indistinguishable from x when Φ(x) rounds to 1.0. Exhaustive enumeration shows the exact saturation threshold is **x ≥ 2.78125** (implementations use x ≥ 3 conservatively).
 
 | Method | *Mean* | Max | *nz Mean* | nz Max | *cp Mean* | cp Max | *cn Mean* | cn Max | *tn Mean* | tn Max |
 |--------|--------|-----|-----------|--------|-----------|--------|-----------|--------|-----------|--------|
@@ -61,7 +61,7 @@ Sorted by Max ULP. Region definitions: **nz** = near_zero (|x| < 0.5), **cp** = 
 
 ### Key Observations
 
-1. **tail_pos is trivial**: All methods achieve 0 ULP (for x ≥ 3, bf16-rounded GELU(x) = x)
+1. **tail_pos is trivial**: All methods achieve 0 ULP (exact saturation at x ≥ 2.78125, implementations use x ≥ 3)
 2. **core_neg is the bottleneck**: Most high-ULP methods fail at x ≈ -3.5 (TAIL_START boundary)
 3. **Six Pure methods achieve Max ULP ≤ 35**: R5 Pure (33, Mean 0.003), B3 Pure (33, Mean 0.01), D2 Pure (33, Mean 0.01), R4 Pure (33, Mean 0.01), F3 Pure (33, Mean 0.02), C1 Pure (35, Mean 0.03)
 4. **Pure methods eliminate shared tail dependency**: All Pure methods use independent asymptotic expansion for deep tail, achieving Max ULP = 33-35 vs 87 for shared-tail versions
@@ -140,7 +140,7 @@ Results are **identical** across different GCC versions and platforms:
 | WSL (Ubuntu 24.04) | GCC 13.3.0 | ✓ Verified |
 | MinGW-w64 (MSYS2 UCRT64) | GCC 15.2.0 | ✓ Verified |
 
-All 30 methods produce byte-for-byte identical ULP analysis output on both platforms (after normalizing line endings). This confirms:
+All 38 methods produce byte-for-byte identical ULP analysis output on both platforms (after normalizing line endings). This confirms:
 - No compiler-specific floating-point behavior differences
 - Consistent `std::bfloat16_t` implementation across GCC versions
 - Deterministic results for reproducible research
@@ -152,7 +152,7 @@ All 30 methods produce byte-for-byte identical ULP analysis output on both platf
 ### Running Analysis
 
 ```bash
-# Full ULP analysis over entire bfloat16 range (30 methods)
+# Full ULP analysis over entire bfloat16 range (38 methods)
 ./gelu_analysis --analyze
 
 # Diagnostic mode with specific test points
@@ -866,7 +866,7 @@ float gelu_asymptotic(float x) {
 ```
 **Max ULP = 33** (best overall). No LUT required.
 
-For x < -8.3125, bf16 underflows to -0 (0x8000).
+Note: The asymptotic expansion covers x ∈ [-13.5625, -8.3125] where bf16 GELU values are tiny subnormals. At x ≤ -13.5625, bf16(GELU(x)) rounds to exactly 0.
 
 ## Project Structure
 
@@ -874,9 +874,11 @@ For x < -8.3125, bf16 underflows to -0 (0x8000).
 |------|-------------|
 | `gelu_implementations.cpp` | All GELU approximations + analysis framework |
 | `ulp_calculator.cpp` | Standalone ULP calculator with lookup table |
+| `saturation_analysis.cpp` | Standalone bf16 saturation threshold finder |
 | `debug_tools.cpp` | Exploratory debugging tools for tail/exp analysis |
 | `test_bfloat16.cpp` | Compiler bfloat16 support verification |
 | `FinalLists.md` | Strategy taxonomy (40 methods, 8 categories) |
+| `SATURATION.md` | Exact bf16 GELU saturation threshold analysis |
 | `CLAUDE.md` | Development instructions and status |
 | `HISTORY.md` | Development history and session notes |
 | `README.md` | This file |
@@ -885,10 +887,20 @@ For x < -8.3125, bf16 underflows to -0 (0x8000).
 
 ### Saturation Thresholds
 
+**Exact bf16 saturation thresholds** (determined by exhaustive enumeration of all 65,280 valid bf16 values):
+
+| Tail | Exact Threshold | Hex | Condition |
+|------|-----------------|-----|-----------|
+| **Positive** | x ≥ **2.78125** | 0x4032 | bf16(GELU(x)) == x |
+| **Negative** | x ≤ **-13.5625** | 0xc159 | bf16(GELU(x)) == 0 |
+
+**Implementation thresholds** (conservative approximations used in code):
 ```
-Positive: x ≥ 3  → GELU(x) = x    (Φ(3) ≈ 0.99865)
-Negative: x ≤ -9 → GELU(x) = 0    (bf16(GELU(-9)) = -0)
+Positive: x ≥ 3   → GELU(x) = x   (margin for approximation error)
+Negative: x ≤ -9  → handled by tail LUT/asymptotic
 ```
+
+See [SATURATION.md](SATURATION.md) for detailed transition analysis and the standalone `saturation_analysis.cpp` tool.
 
 ### Multi-Region Analysis (G3)
 
@@ -919,7 +931,7 @@ After implementing asymptotic expansion for the deep tail, **B3 Pure achieves Ma
 **Remaining error sources:**
 1. **x ≈ -7.65** (LUT methods): Linear interpolation doesn't match exponential decay (87 ULP)
 2. **x ≈ -3.5** (polynomial methods): Transition boundary between core and tail handler (up to 1547 ULP)
-3. **x ≈ -13.25** (B3 Pure): Very deep tail where asymptotic series truncation matters (33 ULP)
+3. **x ≈ -13.25** (Pure methods): Near the exact zero-saturation threshold (-13.5625), asymptotic series truncation matters (33 ULP)
 
 ## Methodology
 
@@ -992,7 +1004,7 @@ Based on FinalLists.md, the project follows a phased implementation approach:
 
 ### All Methods Fixed
 
-All methods now achieve Max ULP ≤ 1547 (A1 Poly-7). **The top 14 methods achieve Max ULP ≤ 88**, with six Pure methods tied at Max ULP = 33.
+All methods now achieve Max ULP ≤ 1547 (A1 Poly-7). **The top 16 methods achieve Max ULP ≤ 88**, with six Pure methods tied at Max ULP = 33.
 
 **Key fixes applied:**
 - **Reference function**: Use `erfc(-z)` for negative x to avoid catastrophic cancellation in `1 + erf(z)`
@@ -1017,7 +1029,7 @@ All methods now achieve Max ULP ≤ 1547 (A1 Poly-7). **The top 14 methods achie
 
 7. **Entire range testing**: Methods optimized for [-8, 8] may fail catastrophically outside this range.
 
-8. **Fourteen methods achieve Max ULP ≤ 88**: R5 Pure/B3 Pure/D2 Pure/F3 Pure/R4 Pure (33), C1 Pure (35), E4 Hermite (58), R5/C1/B3/D2/F2/F3 (87), D4 (88).
+8. **Sixteen methods achieve Max ULP ≤ 88**: R5 Pure/B3 Pure/D2 Pure/F3 Pure/R4 Pure (33), C1 Pure (35), E4 Hermite (58), E4v3 (61), E4v2 (81), R5/C1/B3/D2/F2/F3 (87), D4 (88).
 
 9. **B3 erf is the universal fallback**: When arithmetic-only exp() fails (|x| > 2), the B3 piecewise erf (Taylor + A-S rational) provides reliable fallback.
 
