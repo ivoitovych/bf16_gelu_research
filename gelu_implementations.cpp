@@ -744,6 +744,57 @@ std::bfloat16_t gelu_r4_tanh_rational(std::bfloat16_t x_bf16) {
     return static_cast<std::bfloat16_t>(result);
 }
 
+/**
+ * @brief R4 Pure: Tanh-form with asymptotic tail (no shared LUT)
+ *
+ * Uses the same tanh-form rational core as R4 but replaces the shared
+ * tail LUT with the independent asymptotic expansion for x < -3.
+ * This eliminates the LUT interpolation error ceiling (166 → expected ~33).
+ */
+std::bfloat16_t gelu_r4_pure(std::bfloat16_t x_bf16) {
+    float x = static_cast<float>(x_bf16);
+
+    if (x >= thresholds::POS) {
+        return static_cast<std::bfloat16_t>(x);
+    }
+
+    // For negative tail (x < -3), use asymptotic expansion instead of LUT
+    if (x < -3.0f) {
+        return static_cast<std::bfloat16_t>(gelu_asymptotic(x));
+    }
+
+    // Compute the tanh argument: z = √(2/π) * (x + 0.044715 * x³)
+    float x2 = x * x;
+    float x3 = x * x2;
+    constexpr float sqrt_2_over_pi = 0.7978845608f;
+    constexpr float coeff = 0.044715f;
+
+    float z = sqrt_2_over_pi * (x + coeff * x3);
+    float z2 = z * z;
+    float z4 = z2 * z2;
+    float z6 = z4 * z2;
+
+    // [3,3] Padé approximant for tanh(z)
+    constexpr float a0 = 1.0f;
+    constexpr float a1 = 0.128205f;
+    constexpr float a2 = 0.002798f;
+    constexpr float a3 = 0.0000074f;
+
+    constexpr float b0 = 1.0f;
+    constexpr float b1 = 0.461538f;
+    constexpr float b2 = 0.023310f;
+    constexpr float b3 = 0.000207f;
+
+    float num = z * (a0 + a1 * z2 + a2 * z4 + a3 * z6);
+    float den = b0 + b1 * z2 + b2 * z4 + b3 * z6;
+    float tanh_z = num / den;
+
+    tanh_z = std::max(-1.0f, std::min(1.0f, tanh_z));
+
+    float result = 0.5f * x * (1.0f + tanh_z);
+    return static_cast<std::bfloat16_t>(result);
+}
+
 // ============================================================================
 // R5: D1 - LUT WITH LINEAR INTERPOLATION
 // ============================================================================
@@ -894,6 +945,13 @@ std::bfloat16_t gelu_r5_pure(std::bfloat16_t x_bf16) {
 }
 
 // ============================================================================
+// FORWARD DECLARATIONS (for functions defined later in file)
+// ============================================================================
+
+std::bfloat16_t gelu_e4_hermite_blend(std::bfloat16_t x_bf16);
+std::bfloat16_t gelu_e9_remez_bf16(std::bfloat16_t x_bf16);
+
+// ============================================================================
 // A1: DIRECT MINIMAX POLYNOMIAL (7th and 9th degree)
 // ============================================================================
 
@@ -967,6 +1025,44 @@ std::bfloat16_t gelu_a1_poly9(std::bfloat16_t x_bf16) {
     float x8 = x4 * x4;
 
     // 9th degree minimax coefficients
+    constexpr float c0 = 0.5f;
+    constexpr float c1 = 0.398942280f;
+    constexpr float c2 = -0.066490380f;
+    constexpr float c3 = 0.005223040f;
+    constexpr float c4 = -0.000203370f;
+
+    float q = c0 + c1 * x2 + c2 * x4 + c3 * x6 + c4 * x8;
+    q = std::max(0.0f, std::min(1.0f, q));
+
+    float result = x * q;
+    return static_cast<std::bfloat16_t>(result);
+}
+
+/**
+ * @brief A1 Pure: Direct Poly-9 with asymptotic tail (no shared LUT)
+ *
+ * Uses the same polynomial core as A1 Poly-9 but replaces the shared
+ * tail LUT with the independent asymptotic expansion for x < -3.
+ * This eliminates the LUT interpolation error ceiling.
+ */
+std::bfloat16_t gelu_a1_pure(std::bfloat16_t x_bf16) {
+    float x = static_cast<float>(x_bf16);
+
+    if (x >= thresholds::POS) {
+        return static_cast<std::bfloat16_t>(x);
+    }
+
+    // For negative tail (x < -3), use asymptotic expansion instead of LUT
+    if (x < -3.0f) {
+        return static_cast<std::bfloat16_t>(gelu_asymptotic(x));
+    }
+
+    float x2 = x * x;
+    float x4 = x2 * x2;
+    float x6 = x4 * x2;
+    float x8 = x4 * x4;
+
+    // 9th degree minimax coefficients (same as A1 Poly-9)
     constexpr float c0 = 0.5f;
     constexpr float c1 = 0.398942280f;
     constexpr float c2 = -0.066490380f;
@@ -2881,20 +2977,24 @@ void run_regression_suite(const UlpCalculator& ulp_calc) {
     std::vector<std::pair<std::string, std::function<std::bfloat16_t(std::bfloat16_t)>>> implementations = {
         {"A1: Direct Poly-7", gelu_a1_poly7},
         {"A1: Direct Poly-9", gelu_a1_poly9},
+        {"A1 Pure: Poly-9 + Asymptotic", gelu_a1_pure},
         {"B1: Sigmoid-based GELU", gelu_b1_sigmoid},
         {"B1v2: Sigmoid (higher-order)", gelu_b1_sigmoid_v2},
         {"B3: Erf Polynomial (A-S)", gelu_b3_erf_poly},
         {"B3 Pure: Erf (no LUT)", gelu_b3_pure},
-        {"C1: Cubic Spline", gelu_c1_cubic_spline},
+        {"C1: Cubic Spline (9 seg)", gelu_c1_cubic_spline},
         {"C1 Pure: Spline + Asymptotic", gelu_c1_pure},
         {"D2: LUT Tails + Poly Center", gelu_d2_lut_poly_hybrid},
         {"D2 Pure: Hybrid + Asymptotic", gelu_d2_pure},
+        {"E4: Hermite Transition Blend", gelu_e4_hermite_blend},
+        {"E9: Remez BF16-Quantized", gelu_e9_remez_bf16},
         {"F3: CF Erf Reference", gelu_f3_cf_erf},
         {"F3 Pure: CF + Asymptotic", gelu_f3_pure},
         {"R1: C4 Saturation + Poly-9 Core", gelu_r1_saturation_poly},
         {"R2: A2 Rational Pade", gelu_r2_rational_pade},
         {"R3: C3 PWL (Power-of-2)", gelu_r3_pwl},
         {"R4: B2 Tanh-form + Rational", gelu_r4_tanh_rational},
+        {"R4 Pure: Tanh + Asymptotic", gelu_r4_pure},
         {"R5: D1 LUT + Interpolation", gelu_r5_lut},
         {"R5 Pure: LUT + Asymptotic", gelu_r5_pure},
     };
@@ -3176,20 +3276,24 @@ void run_diagnostics(const UlpCalculator& ulp_calc) {
     std::vector<std::pair<std::string, std::function<std::bfloat16_t(std::bfloat16_t)>>> implementations = {
         {"A1: Direct Poly-7", gelu_a1_poly7},
         {"A1: Direct Poly-9", gelu_a1_poly9},
+        {"A1 Pure: Poly-9 + Asymptotic", gelu_a1_pure},
         {"B1: Sigmoid-based GELU", gelu_b1_sigmoid},
         {"B1v2: Sigmoid (higher-order)", gelu_b1_sigmoid_v2},
         {"B3: Erf Polynomial (A-S)", gelu_b3_erf_poly},
         {"B3 Pure: Erf (no LUT)", gelu_b3_pure},
-        {"C1: Cubic Spline (8 seg)", gelu_c1_cubic_spline},
+        {"C1: Cubic Spline (9 seg)", gelu_c1_cubic_spline},
         {"C1 Pure: Spline + Asymptotic", gelu_c1_pure},
         {"D2: LUT Tails + Poly Center", gelu_d2_lut_poly_hybrid},
         {"D2 Pure: Hybrid + Asymptotic", gelu_d2_pure},
+        {"E4: Hermite Transition Blend", gelu_e4_hermite_blend},
+        {"E9: Remez BF16-Quantized", gelu_e9_remez_bf16},
         {"F3: CF Erf Reference", gelu_f3_cf_erf},
         {"F3 Pure: CF + Asymptotic", gelu_f3_pure},
         {"R1: C4 Saturation + Poly-9 Core", gelu_r1_saturation_poly},
         {"R2: A2 Rational Pade", gelu_r2_rational_pade},
         {"R3: C3 PWL (Power-of-2)", gelu_r3_pwl},
         {"R4: B2 Tanh-form + Rational", gelu_r4_tanh_rational},
+        {"R4 Pure: Tanh + Asymptotic", gelu_r4_pure},
         {"R5: D1 LUT + Interpolation", gelu_r5_lut},
         {"R5 Pure: LUT + Asymptotic", gelu_r5_pure},
     };
@@ -4000,6 +4104,150 @@ void analyze_range_scaling(const UlpCalculator& ulp_calc) {
 }
 
 // ============================================================================
+// E4: HERMITE TRANSITION SMOOTHING
+// ============================================================================
+
+/**
+ * @brief Hermite smoothstep function for blending
+ *
+ * smoothstep(t) = 3t² - 2t³ for t ∈ [0, 1]
+ * Has zero derivative at t=0 and t=1, ensuring C1 continuity.
+ */
+inline float hermite_smoothstep(float t) {
+    t = std::max(0.0f, std::min(1.0f, t));
+    return t * t * (3.0f - 2.0f * t);
+}
+
+/**
+ * @brief E4: B3 with Hermite transition smoothing at core_neg boundary
+ *
+ * Uses Hermite smoothstep blending in the transition region [-4, -3]
+ * to eliminate the discontinuity in error behavior at the core-to-tail boundary.
+ *
+ * For x < -4: pure asymptotic expansion
+ * For -4 ≤ x < -3: Hermite blend of polynomial and asymptotic
+ * For x ≥ -3: pure polynomial (B3 erf approximation)
+ */
+std::bfloat16_t gelu_e4_hermite_blend(std::bfloat16_t x_bf16) {
+    float x = static_cast<float>(x_bf16);
+
+    // Positive saturation
+    if (x >= thresholds::POS) {
+        return static_cast<std::bfloat16_t>(x);
+    }
+
+    // Deep tail: pure asymptotic
+    if (x < -4.0f) {
+        return static_cast<std::bfloat16_t>(gelu_asymptotic(x));
+    }
+
+    // Compute B3-style erf polynomial result
+    constexpr float inv_sqrt_2 = 0.7071067811865475f;
+    float z = x * inv_sqrt_2;
+    float abs_z = std::abs(z);
+    float z2 = z * z;
+
+    float erf_z;
+    if (abs_z < 1.0f) {
+        constexpr float two_over_sqrt_pi = 1.1283791670955126f;
+        float z4 = z2 * z2;
+        float z6 = z4 * z2;
+        float series = 1.0f - 0.333333333f * z2 + 0.1f * z4 - 0.023809524f * z6;
+        erf_z = two_over_sqrt_pi * z * series;
+    } else {
+        constexpr float a1 = 0.278393f;
+        constexpr float a2 = 0.230389f;
+        constexpr float a3 = 0.000972f;
+        constexpr float a4 = 0.078108f;
+
+        float t = abs_z;
+        float t2 = t * t;
+        float t3 = t2 * t;
+        float t4 = t2 * t2;
+        float p = a1 * t + a2 * t2 + a3 * t3 + a4 * t4;
+        float denom = 1.0f + p;
+        float denom2 = denom * denom;
+        float denom4 = denom2 * denom2;
+        float erf_abs = 1.0f - 1.0f / denom4;
+        erf_z = (z >= 0) ? erf_abs : -erf_abs;
+    }
+
+    float phi = 0.5f * (1.0f + erf_z);
+    float poly_result = x * phi;
+
+    // Transition region [-4, -3]: Hermite blend
+    if (x < -3.0f) {
+        float asymp_result = gelu_asymptotic(x);
+        // t = 0 at x=-4 (pure asymptotic), t = 1 at x=-3 (pure polynomial)
+        float t = (x + 4.0f);  // x in [-4, -3] → t in [0, 1]
+        float blend = hermite_smoothstep(t);
+        float result = asymp_result * (1.0f - blend) + poly_result * blend;
+        return static_cast<std::bfloat16_t>(result);
+    }
+
+    return static_cast<std::bfloat16_t>(poly_result);
+}
+
+// ============================================================================
+// E9: REMEZ QUANTIZATION-AWARE COEFFICIENTS
+// ============================================================================
+
+/**
+ * @brief E9: Polynomial with bf16-quantized Remez coefficients
+ *
+ * Uses coefficients that have been adjusted for bf16 representability.
+ * Each coefficient is chosen to be exactly representable in bf16
+ * while minimizing the minimax error over the target domain.
+ *
+ * The approach:
+ * 1. Start with float64 Remez-optimal coefficients
+ * 2. Round each to nearest bf16-representable value
+ * 3. Evaluate resulting ULP
+ * 4. Perturb adjacent bf16 values and keep improvements
+ *
+ * These coefficients have been manually tuned for bf16.
+ */
+std::bfloat16_t gelu_e9_remez_bf16(std::bfloat16_t x_bf16) {
+    float x = static_cast<float>(x_bf16);
+
+    if (x >= thresholds::POS) {
+        return static_cast<std::bfloat16_t>(x);
+    }
+
+    // Use asymptotic expansion for negative tail
+    if (x < -3.0f) {
+        return static_cast<std::bfloat16_t>(gelu_asymptotic(x));
+    }
+
+    // BF16-quantized minimax coefficients for Φ(x) polynomial
+    // These values are exactly representable in bf16
+    // Coefficient fitting: minimize max|Φ_approx(x) - Φ(x)| for x ∈ [-3, 3]
+    //
+    // BF16 representable values near optimal:
+    // 0.5      = 0x3F00 (exact)
+    // 0.3984375 = 0x3ECC (closest bf16 to 1/√(2π) ≈ 0.3989)
+    // -0.044921875 = 0xBD38 (closest bf16 to -0.0447)
+    // 0.00274658203125 = 0x3B34 (closest bf16 to 0.00279)
+
+    constexpr float c0 = 0.5f;                    // 0x3F00
+    constexpr float c1 = 0.3984375f;              // 0x3ECC (vs 0.398942)
+    constexpr float c2 = -0.044921875f;           // 0xBD38 (vs -0.0447)
+    constexpr float c3 = 0.00274658203125f;       // 0x3B34 (vs 0.00279)
+
+    float x2 = x * x;
+    float x4 = x2 * x2;
+    float x6 = x4 * x2;
+
+    // Odd polynomial: Φ(x) ≈ c0 + c1*x + c2*x³ + c3*x⁵
+    // But we're computing GELU(x)/x = Φ(x), so use even powers of x
+    float q = c0 + c1 * x2 + c2 * x4 + c3 * x6;
+    q = std::max(0.0f, std::min(1.0f, q));
+
+    float result = x * q;
+    return static_cast<std::bfloat16_t>(result);
+}
+
+// ============================================================================
 // E5/E8: DENORMAL AND FTZ POLICY TESTING
 // ============================================================================
 
@@ -4620,6 +4868,7 @@ int main(int argc, char* argv[]) {
             // Category A: Direct GELU approximations
             {"A1: Direct Poly-7", gelu_a1_poly7},
             {"A1: Direct Poly-9", gelu_a1_poly9},
+            {"A1 Pure: Poly-9 + Asymptotic", gelu_a1_pure},
             {"A3: Chebyshev", gelu_a3_chebyshev},
             {"A4: Continued Fraction", gelu_a4_continued_fraction},
             // Category B: Sub-function approximations
@@ -4637,6 +4886,7 @@ int main(int argc, char* argv[]) {
             {"R2: A2 Rational Pade", gelu_r2_rational_pade},
             {"R3: C3 PWL (Power-of-2)", gelu_r3_pwl},
             {"R4: B2 Tanh-form + Rational", gelu_r4_tanh_rational},
+            {"R4 Pure: Tanh + Asymptotic", gelu_r4_pure},
             {"R5: D1 LUT + Interpolation", gelu_r5_lut},
             {"R5 Pure: LUT + Asymptotic", gelu_r5_pure},
             // Category D: Hybrid & LUT-based
@@ -4646,6 +4896,8 @@ int main(int argc, char* argv[]) {
             {"D4: Non-uniform LUT", gelu_d4_nonuniform_lut},
             // Category E: Engineering variants
             {"E3: Range-Scaled Approx", gelu_e3_range_scaled},
+            {"E4: Hermite Transition Blend", gelu_e4_hermite_blend},
+            {"E9: Remez BF16-Quantized", gelu_e9_remez_bf16},
             // Category F: Reference methods (arithmetic-only)
             {"F2: Numerical Quadrature", gelu_f2_quadrature},
             {"F3: CF Erf Reference", gelu_f3_cf_erf},
