@@ -200,6 +200,71 @@ void test_bf16_representation() {
     }
 }
 
+// ============================================================================
+// SATURATION THRESHOLD ANALYSIS
+// ============================================================================
+
+/**
+ * @brief Analyze negative tail near exact saturation threshold (-13.5625)
+ *
+ * This test investigates why Max ULP = 33 occurs at x ≈ -13.25.
+ * The issue is that fast_exp_neg underflows to 0 too early, before
+ * bf16(GELU(x)) actually rounds to 0.
+ */
+void test_saturation_threshold() {
+    std::cout << "\n=== Saturation Threshold Analysis ===" << std::endl;
+    std::cout << "Exact bf16 zero-saturation: x <= -13.5625" << std::endl;
+    std::cout << "\nAnalyzing x from -13.0 to -14.0:\n" << std::endl;
+
+    constexpr double INV_SQRT_2 = 0.7071067811865475244;
+    constexpr float inv_sqrt_2pi = 0.3989422804014327f;
+
+    for (float x = -13.0f; x >= -14.0f; x -= 0.0625f) {
+        // Reference GELU using erfc
+        double z = x * INV_SQRT_2;
+        double phi = 0.5 * std::erfc(-z);
+        double ref_gelu = x * phi;
+
+        // Our asymptotic approximation
+        float x2 = x * x;
+        float x2_half = x2 * 0.5f;
+        float exp_val = fast_exp_neg(x2_half);
+        float asym_gelu = 0.0f;
+        if (exp_val != 0.0f) {
+            float phi_x = exp_val * inv_sqrt_2pi;
+            float inv_x2 = 1.0f / x2;
+            float correction = 1.0f - inv_x2 + 3.0f*inv_x2*inv_x2 - 15.0f*inv_x2*inv_x2*inv_x2;
+            asym_gelu = -phi_x * correction;
+        }
+
+        // Convert to bf16-like representation
+        float ref_f = static_cast<float>(ref_gelu);
+        uint32_t ref_bits, asym_bits;
+        std::memcpy(&ref_bits, &ref_f, sizeof(float));
+        std::memcpy(&asym_bits, &asym_gelu, sizeof(float));
+        uint16_t ref_bf16 = ref_bits >> 16;
+        uint16_t asym_bf16 = asym_bits >> 16;
+
+        int ulp_diff = std::abs(static_cast<int>(ref_bf16) - static_cast<int>(asym_bf16));
+
+        std::cout << "x=" << std::fixed << std::setprecision(4) << x
+                  << "  x²/2=" << std::setprecision(2) << x2_half
+                  << std::scientific << std::setprecision(3)
+                  << "  ref=" << ref_gelu
+                  << "  asym=" << asym_gelu
+                  << std::hex
+                  << "  ref_bf16=0x" << std::setw(4) << std::setfill('0') << ref_bf16
+                  << "  asym_bf16=0x" << std::setw(4) << asym_bf16
+                  << std::dec << std::setfill(' ')
+                  << "  ULP=" << ulp_diff;
+        if (ulp_diff > 0) std::cout << " <-- MISMATCH";
+        std::cout << std::endl;
+    }
+
+    std::cout << "\nKey insight: fast_exp_neg underflows to 0 when x²/2 > ~88" << std::endl;
+    std::cout << "This causes ULP errors for x in [-13.5, -13.0] where bf16 GELU is non-zero" << std::endl;
+}
+
 int main(int argc, char* argv[]) {
     std::cout << "BFloat16 GELU Research - Debug Tools" << std::endl;
     std::cout << "=====================================" << std::endl;
@@ -215,6 +280,9 @@ int main(int argc, char* argv[]) {
 
     // Test BFloat16 representation
     test_bf16_representation();
+
+    // Test saturation threshold
+    test_saturation_threshold();
 
     return 0;
 }
