@@ -1492,3 +1492,102 @@ R5 Pure uses a 512-entry LUT in the core region [-3, 3], providing more precise 
 ### Key Insight
 
 The pattern of "Pure" variants (using asymptotic tail instead of LUT) can be applied to any method that currently uses the two-tier tail LUT. The asymptotic expansion is mathematically superior for deep tail because it correctly captures the exponential decay behavior, while LUT interpolation introduces discretization error.
+
+---
+
+## Session 16: C1/D2/F3 Pure Variants (5 Pure Methods Total)
+
+### Objective
+Apply the "Pure" pattern (asymptotic tail instead of shared tail LUT) to C1 Spline, D2 Hybrid, and F3 CF Erf methods, achieving complete methodological independence for all high-performing methods.
+
+### Background
+Sessions 12 and 15 established that Pure variants (B3 Pure, R5 Pure) outperform their LUT-based counterparts by using asymptotic expansion for the deep negative tail. The shared tail LUT interpolation error limits all LUT-based methods to Max ULP = 87, while asymptotic expansion achieves Max ULP = 33.
+
+### Implementations Added
+
+#### C1 Pure: Cubic Hermite Spline + Asymptotic
+```cpp
+std::bfloat16_t gelu_c1_pure(std::bfloat16_t x_bf16) {
+    // Positive saturation: x >= 3
+    if (x >= thresholds::POS) return x;
+
+    // Negative tail: x < -3.5, use asymptotic expansion
+    if (x < thresholds::TAIL_START) return gelu_asymptotic(x);
+
+    // Core region: 9-segment Hermite cubic spline
+    // (same as C1 Spline)
+}
+```
+- Uses threshold -3.5 (matching original C1)
+- Result: Max ULP 35, Mean ULP 0.03
+
+#### D2 Pure: Hybrid LUT+Erf + Asymptotic
+```cpp
+std::bfloat16_t gelu_d2_pure(std::bfloat16_t x_bf16) {
+    // Positive saturation: x >= 3
+    if (x >= thresholds::POS) return x;
+
+    // Negative tail: x < -3.0, use asymptotic expansion
+    if (x < -3.0f) return gelu_asymptotic(x);
+
+    // Core region: B3-style piecewise erf
+    // Taylor for |z| < 1, A-S rational for |z| >= 1
+}
+```
+- Uses threshold -3.0 (to avoid B3 erf boundary error)
+- Result: Max ULP 33, Mean ULP 0.01
+
+#### F3 Pure: Continued Fraction Erf + Asymptotic
+```cpp
+std::bfloat16_t gelu_f3_pure(std::bfloat16_t x_bf16) {
+    // Positive saturation: x >= 3
+    if (x >= thresholds::POS) return x;
+
+    // Negative tail: x < -2.0, use asymptotic expansion
+    if (x < -2.0) return gelu_asymptotic(x);
+
+    // Core region: Lentz CF algorithm for erf(z)
+}
+```
+- Uses threshold -2.0 (appropriate for CF convergence region)
+- Result: Max ULP 33, Mean ULP 0.02
+
+### Results
+
+| Method | Max ULP | Mean ULP | Improvement vs Non-Pure |
+|--------|---------|----------|------------------------|
+| **D2 Pure** | **33** | 0.01 | 87 → 33 (62% reduction) |
+| **F3 Pure** | **33** | 0.02 | 87 → 33 (62% reduction) |
+| **C1 Pure** | **35** | 0.03 | 87 → 35 (60% reduction) |
+
+### All 5 Pure Methods Summary
+
+| Method | Max ULP | Mean ULP | Core Algorithm |
+|--------|---------|----------|----------------|
+| R5 Pure | 33 | 0.003 | LUT + linear interpolation |
+| B3 Pure | 33 | 0.01 | Abramowitz-Stegun erf polynomial |
+| D2 Pure | 33 | 0.01 | Hybrid LUT+erf (B3-style core) |
+| F3 Pure | 33 | 0.02 | Continued fraction erf |
+| C1 Pure | 35 | 0.03 | Cubic Hermite spline |
+
+### Key Observations
+
+1. **Four methods tie at Max ULP 33**: R5 Pure, B3 Pure, D2 Pure, and F3 Pure all achieve the same best Max ULP.
+
+2. **R5 Pure has best Mean ULP**: 0.003 vs 0.01-0.03 for others, because LUT interpolation is more accurate in core region than polynomial approximations.
+
+3. **C1 Pure slightly higher Max ULP (35)**: The cubic spline has higher core_neg error than erf-based methods.
+
+4. **Complete methodological independence**: Each Pure method implements its own tail handling via asymptotic expansion, eliminating the shared `gelu_negative_tail()` dependency.
+
+### Files Modified
+- `gelu_implementations.cpp`: Added `gelu_c1_pure()`, `gelu_d2_pure()`, `gelu_f3_pure()`
+- `README.md`: Updated results table (30 methods), added Pure method descriptions
+- `CLAUDE.md`: Updated status (30 methods, 5 Pure variants)
+- `HISTORY.md`: This session documentation
+
+### Project Status
+
+**30 methods implemented. 5 Pure methods achieve Max ULP ≤ 35.**
+
+The Pure variant pattern is now fully applied to all high-performing methods. R5 Pure remains the overall best with Max ULP 33 and Mean ULP 0.003.
