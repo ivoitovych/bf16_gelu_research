@@ -31,7 +31,7 @@ g++ -std=c++23 -O3 -march=native -o gelu_analysis gelu_implementations.cpp -lm
 | `debug_tools.cpp` | Exploratory debugging tools |
 | `FinalLists.md` | Strategy taxonomy (40 methods, 8 categories) |
 | `README.md` | Full documentation and results |
-| `HISTORY.md` | Development history (17 sessions) |
+| `HISTORY.md` | Development history (18 sessions) |
 | `CLAUDE.md` | This file - project instructions |
 
 ## Constraints
