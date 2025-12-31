@@ -57,6 +57,11 @@ static_assert(sizeof(uint16_t) == 2, "uint16_t must be 2 bytes");
 static_assert(sizeof(float) == 4, "float must be 4 bytes");
 static_assert(sizeof(double) == 8, "double must be 8 bytes");
 
+// M_PI may not be defined on all platforms (not standard C++)
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 // ============================================================================
 // TYPE CONVERSION UTILITIES
 // ============================================================================
